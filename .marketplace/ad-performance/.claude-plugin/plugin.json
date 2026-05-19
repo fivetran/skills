@@ -1,0 +1,8 @@
+{
+  "name": "ad-performance",
+  "version": "1.0.0",
+  "description": "Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks",
+  "author": {
+    "name": "Fivetran"
+  }
+}

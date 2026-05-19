@@ -1,0 +1,25 @@
+{
+  "config_version": "4.0",
+  "skill": {"id": "store-performance", "version": "0.1.0"},
+  "destination": {
+    "destination_id": "demo",
+    "destination_type": "snowflake",
+    "warehouse_tool": "snowflake_cli",
+    "database": "<YOUR_DATABASE>",
+    "location": "US"
+  },
+  "connectors": {
+    "shopify": {
+      "connection_id": "demo",
+      "raw_schema": "<YOUR_SCHEMA>",
+      "model_tier": "raw",
+      "unified_schema": null,
+      "single_source_schema": null,
+      "active_models": [],
+      "excluded_models": [],
+      "last_ended_at": "2026-01-01T00:00:00Z",
+      "qdm_functional": false
+    }
+  },
+  "skipped_families": []
+}

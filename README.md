@@ -1,1 +1,54 @@
-# skills
+# Fivetran Skills
+
+> **Read-only mirror.** This repo is automatically published from an internal repository. Do not open pull requests here — all development and review happens internally.
+
+The official repository of Fivetran skills and plugins for AI Agents, as a [Claude Plugin Marketplace](https://code.claude.com/docs/en/discover-plugins).
+
+## Installation
+
+### Claude Code CLI
+
+```
+/plugin marketplace add fivetran/skills
+/plugin install base@fivetran-skills       # default skills only
+/plugin install all@fivetran-skills        # every skill in the repo
+/plugin install <plugin>@fivetran-skills   # one named plugin (see Plugins below)
+```
+
+### Claude Desktop App
+
+1. Click **Customize** in the left nav and click the **+** next to Personal Plugins
+2. Click **+ Create Plugin** → **Add Marketplace**
+3. Enter `fivetran/skills`
+
+### Vercel Skills CLI
+
+Skills can also be installed individually by referencing them in the `skills/` subdirectory.
+
+```
+npx skills add fivetran/skills
+```
+
+See [Vercel's Skills docs](https://github.com/vercel-labs/skills) for flags like `--global`, `--skill`, `--agent`, and `--list`.
+
+## Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| [base](.marketplace/base) | Get a quick overview of the connected Fivetran account |
+| [ad-performance](.marketplace/ad-performance) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
+| [store-performance](.marketplace/store-performance) | E-commerce store performance analysis from raw Shopify connector data |
+| [all](.marketplace/all) | All skills bundled into a single plugin |
+
+## MCP
+
+The bundled Fivetran MCP server uses the published `uvx` launcher from
+[fivetran/fivetran-mcp](https://github.com/fivetran/fivetran-mcp):
+
+```bash
+uvx --from git+https://github.com/fivetran/fivetran-mcp fivetran-mcp
+```
+
+When the `base` or `all` plugin is enabled, Claude Code prompts for the Fivetran
+API key and API secret via `userConfig` and injects them into the MCP server
+configuration automatically.

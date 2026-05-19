@@ -1,0 +1,31 @@
+{
+  "name": "fivetran-skills",
+  "owner": {
+    "name": "Fivetran"
+  },
+  "metadata": {
+    "description": "Fivetran skills and plugins for AI agents."
+  },
+  "plugins": [
+    {
+      "name": "base",
+      "source": "./.marketplace/base",
+      "description": "Get a quick overview of the connected Fivetran account"
+    },
+    {
+      "name": "ad-performance",
+      "source": "./.marketplace/ad-performance",
+      "description": "Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks"
+    },
+    {
+      "name": "store-performance",
+      "source": "./.marketplace/store-performance",
+      "description": "E-commerce store performance analysis from raw Shopify connector data"
+    },
+    {
+      "name": "all",
+      "source": "./.marketplace/all",
+      "description": "All skills: ad-performance, fivetran-account-info, store-performance"
+    }
+  ]
+}
