@@ -1,6 +1,6 @@
 {
   "name": "store-performance",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "E-commerce store performance analysis from raw Shopify connector data",
   "author": {
     "name": "Fivetran"
