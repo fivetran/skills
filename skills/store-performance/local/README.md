@@ -6,7 +6,7 @@ This directory lets you run the store-performance skill against a fixed warehous
 
 1. Copy the template to the standard profile path:
    ```sh
-   cp .marketplace/fivetran-skills/skills/store-performance/local/profile.example.json \
+   cp ${CLAUDE_PLUGIN_ROOT}/skills/store-performance/local/profile.example.json \
       ~/.fivetran/skills/store-performance/profile.json
    ```
    (Or set `STORE_PERFORMANCE_PROFILE_PATH=/some/other/path.json` and copy there.)

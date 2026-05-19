@@ -28,30 +28,37 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
 
 1. **Validate the local profile.**
    ```bash
-   bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh validate
+   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh validate
    ```
    Exit codes: `0` ready · `60` missing (run setup below) · `61` invalid/secret detected (run setup below) · `62` credentials missing (run setup below).
 
 2. **First-run setup** (only when validate exits `60`, `61`, or `62`).
 
-   **Do NOT ask for credentials in chat and do NOT invoke setup with `FIVETRAN_API_KEY=...` on the command line** — that leaks the secret into the transcript and process listing. Instead, tell the user to run setup in their own terminal, and offer to copy the command to their clipboard:
+   **Do NOT ask for credentials in chat and do NOT invoke setup with `FIVETRAN_API_KEY=...` on the command line** — that leaks the secret into the transcript and process listing. Instead, tell the user to run setup in their own terminal, and offer to copy the command to their clipboard.
+
+   **Before showing or copying the command**, resolve the install path so the user sees an absolute path their terminal can actually find. Run:
+   ```bash
+   echo "$CLAUDE_PLUGIN_ROOT/skills/ad-performance/asa.sh"
+   ```
+   Use that absolute path in the command you show the user. Example block to present:
 
    > To finish setup, open a terminal and run:
    > ```
-   > bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance
+   > bash <resolved-absolute-path-to-asa.sh> setup --skill ad-performance
    > ```
    > It will prompt for your Fivetran API key and secret (input is hidden). Get them from https://fivetran.com/account/settings/api-config. Let me know when it's done.
 
    After showing the command, ask: *"Want me to copy that to your clipboard?"* If they say yes, run the appropriate command:
-   - macOS: `echo 'bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance' | pbcopy`
-   - Windows: `echo bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance | clip`
-   - Linux: `echo 'bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance' | xclip -selection clipboard 2>/dev/null || echo '...' | xsel --clipboard 2>/dev/null`
+   Use double-quoted echo so `${CLAUDE_PLUGIN_ROOT}` expands in your shell before reaching the clipboard — the user's terminal won't have it set.
+   - macOS: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance" | pbcopy`
+   - Windows: `echo bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance | clip`
+   - Linux: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance" | xclip -selection clipboard 2>/dev/null || echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance" | xsel --clipboard 2>/dev/null`
 
    Once the user says they're done, re-run `validate` silently. Do not narrate the internal check — just act on the result:
    - `validate` returns `0` → profile is ready. Continue to Step 3.
    - `validate` still returns `60` → **silently run setup yourself** (credentials are stored, no env vars needed) and present the result naturally to the user without mentioning exit codes or profile files:
      ```bash
-     bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance 2>&1; echo "EXIT:$?"
      ```
      Then handle the exit code below.
 
@@ -60,13 +67,13 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
    - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe to the user verbatim and STOP. Do not attempt to install or authenticate the CLI on the user's behalf. Also offer the `!` shortcut: *"Or type `! gcloud auth application-default login` directly in this chat prompt to run it here without switching terminals."*
    - `51` (destination disambiguate) — the account has multiple destinations. Parse the JSON printed to stdout; it contains `"suggested"` (first destination) and `"destinations"` (full list). Show the user a numbered table of `destination_id` + `display_name` + `destination_type`. Introduce it naturally — e.g. *"Your account has multiple data destinations. Which one should I use for ad data?"* — and suggest the first as default: *"I'll use {display_name} — reply with a number to pick a different one, or just say 'yes' to confirm."* Once they confirm or pick, **run setup yourself** with the chosen id:
      ```bash
-     bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance --destination-id <chosen_id> 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance --destination-id <chosen_id> 2>&1; echo "EXIT:$?"
      ```
    - `52` (connection disambiguate) — the destination has multiple active connections for one or more ad families. Parse the JSON printed to stdout; it contains `"families"` (a map of family → list of candidates, each with `connection_id`, `schema`, `sync_state`). For each family in `"families"`, show the user a numbered table and ask them to **pick one** or **skip the family entirely**. Then **run setup yourself** with the appropriate flags:
      - Use `--connection FAM=ID` for each picked family.
      - Use `--skip-family FAM` for each skipped family. Skipped families are persisted in the profile and won't prompt again on future refreshes. Use `--no-skip` to clear all persisted skips.
      ```bash
-     bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh setup --skill ad-performance \
+     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance \
        --destination-id <dest_id> \
        --connection google_ads=<chosen_connection_id> \
        --skip-family pinterest_ads 2>&1; echo "EXIT:$?"
@@ -77,7 +84,7 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
 
 3. **Resolve connector context.** For each ad connector relevant to the user's question (`google_ads`, `facebook_ads`, `bingads`, `linkedin_ads`, `tiktok_ads`, `pinterest_ads`, `snapchat_ads`), call:
    ```bash
-   bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh resolve google_ads
+   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh resolve google_ads
    ```
    It returns a single-line JSON:
    ```json
@@ -92,7 +99,7 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
 
    **On `relation not found`:** retry with `--refresh-on-miss`:
    ```bash
-   bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh resolve google_ads --refresh-on-miss
+   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh resolve google_ads --refresh-on-miss
    ```
    If still failing, stop and report — the schema may have changed and setup needs to be re-run.
 
@@ -104,14 +111,14 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
 
 5. **Refresh on relation-not-found.** If a query fails because a table or schema is missing, rerun resolve with refresh:
    ```bash
-   bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh resolve google_ads --refresh-on-miss
+   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh resolve google_ads --refresh-on-miss
    ```
 
 > Note: the verified query patterns below assume BigQuery syntax and `model_tier == multisource`. For Snowflake/Databricks, adapt identifier quoting/case. For `single_source` or `raw` tiers, adapt to the available tables in `{SINGLE_SOURCE_DATASET}` or `{RAW_DATASET}`.
 
 ### Demo / preconfigured profile
 
-For demos — showing the skill against a fixed warehouse without standing up a real Fivetran account — copy `.marketplace/fivetran-skills/skills/ad-performance/local/profile.example.json` to `~/.fivetran/skills/ad-performance/profile.json` (or any path via `AD_PERFORMANCE_PROFILE_PATH`), then edit `database` and each connector's `unified_schema` to point at your demo BigQuery `project.dataset`. Remove any connector entries whose families don't have data in the dataset. Invoke the skill normally; `validate` passes and the rest of the flow runs against the demo data. Delete the profile to return to first-run state. See `local/README.md` for details.
+For demos — showing the skill against a fixed warehouse without standing up a real Fivetran account — copy `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/local/profile.example.json` to `~/.fivetran/skills/ad-performance/profile.json` (or any path via `AD_PERFORMANCE_PROFILE_PATH`), then edit `database` and each connector's `unified_schema` to point at your demo BigQuery `project.dataset`. Remove any connector entries whose families don't have data in the dataset. Invoke the skill normally; `validate` passes and the rest of the flow runs against the demo data. Delete the profile to return to first-run state. See `local/README.md` for details.
 
 ## Behavioral Rules
 
@@ -174,7 +181,7 @@ If `excluded_models` is non-empty for a QDM, add a note: "Note: [N] models exclu
 Run the readiness probe — it queries all `active_models` in parallel and returns per-table-per-platform freshness in one call:
 
 ```bash
-bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh readiness
+bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh readiness
 ```
 
 Parse the JSON response:
@@ -195,7 +202,7 @@ For each platform, take the row with the most recent `latest_date` as the canoni
 
 The required CLI (`bq`, `snow`, or `databricks`) and auth steps depend on your warehouse. Run:
 ```bash
-bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
+bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
 ```
 It will print the exact install and auth commands needed if anything is missing.
 
@@ -333,7 +340,7 @@ Then show **2–3 suggested follow-up questions** that drill deeper.
 If yes, write the payload to `/tmp/ad_payload.json` and run the generator. Reuse query results — do NOT re-run queries.
 
 ```bash
-python3 .marketplace/fivetran-skills/skills/ad-performance/generate-dashboard.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/generate-dashboard.py \
   --data /tmp/ad_payload.json \
   --output /tmp/ad_dashboard.html
 open /tmp/ad_dashboard.html
@@ -347,7 +354,7 @@ Read it on demand only when the user asks for a visualization.
 
 | Error | Response |
 |---|---|
-| Warehouse connection failure | "Cannot connect to warehouse. Run `bash .marketplace/fivetran-skills/skills/ad-performance/asa.sh check-cli <tool>` to diagnose auth." |
+| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh check-cli <tool>` to diagnose auth." |
 | Permission denied | "Query failed: permission denied. Your account needs BigQuery Data Viewer role on project `{PROJECT_ID}`." |
 | Stale data (>7 days) | Inline warning on every response: "Note: [platform] data was last synced [N] days ago." |
 | Zero-row results | "Query returned no results. Possible causes: date range may not contain data, filters may be too narrow, or the connector may not be syncing." |
