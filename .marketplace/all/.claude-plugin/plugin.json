@@ -2,7 +2,7 @@
   "author": {
     "name": "Fivetran"
   },
-  "description": "All skills: ad-performance, fivetran-account-info, store-performance",
+  "description": "All skills: ad-performance, fivetran-account-info, lakehouse-explorer, store-performance",
   "name": "all",
   "userConfig": {
     "fivetran_allow_writes": {
@@ -27,5 +27,5 @@
       "type": "string"
     }
   },
-  "version": "1.0.1"
+  "version": "1.0.2"
 }

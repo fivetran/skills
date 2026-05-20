@@ -10,7 +10,7 @@
     {
       "name": "base",
       "source": "./.marketplace/base",
-      "description": "Get a quick overview of the connected Fivetran account"
+      "description": "Base skills: fivetran-account-info, lakehouse-explorer"
     },
     {
       "name": "ad-performance",
@@ -25,7 +25,7 @@
     {
       "name": "all",
       "source": "./.marketplace/all",
-      "description": "All skills: ad-performance, fivetran-account-info, store-performance"
+      "description": "All skills: ad-performance, fivetran-account-info, lakehouse-explorer, store-performance"
     }
   ]
 }
