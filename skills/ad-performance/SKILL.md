@@ -192,9 +192,11 @@ Parse the JSON response:
 
 For each platform, take the row with the most recent `latest_date` as the canonical freshness signal. **Do not run additional exploratory freshness queries** — only run more queries if the user asks something specific that the readiness output doesn't already answer.
 
+Also surface the warehouse (`destination.database`), unified dataset (`schema` from any freshness row), and the distinct active models found across all freshness rows. Include a "Latest Data" column in the freshness table using the most recent `latest_date` per platform (format as `YYYY-MM-DD`).
+
 **If some platforms are missing from all tables:** Work with what's available and disclose the gap.
 
-**If data is stale (latest date > 7 days ago):** Warn on every response: "Note: [platform] data was last synced on [date]. Results may not reflect recent campaign changes."
+**If `latest_date` is null for a platform:** Surface this explicitly — "No data found for [platform]." Do not silently omit the platform.
 
 **If `status == "no_qdm"` or all connectors are raw tier:** Confirm tables exist in `raw_schema`. If `qdm_degraded` is true in a resolve output, note: "Note: [family] QDM exists but its active models are not yet materialized — querying raw connector tables instead."
 
@@ -304,7 +306,9 @@ Compute all derived metrics in SQL. Always use NULLIF to prevent division by zer
 ## Workflow
 
 ### Step 1: Readiness Check (first invocation only)
-Run the readiness queries above. Report which platforms are available and the latest data date for each. Warn about any stale data.
+Run the readiness queries above. Report which platforms are available and the latest data date for each.
+
+Then close with 2–3 useful starter questions tailored to the available platforms and active models. Present them under a "What would you like to analyze?" heading, and follow with a single line offering visualization: *"Would you like results visualized as an interactive dashboard?"*
 
 ### Step 2: Understand the Question
 Parse the user's question. Identify:
@@ -330,14 +334,20 @@ Use the appropriate dataset for the `model_tier`. Run multiple queries for depth
 
 Then show **2–3 suggested follow-up questions** that drill deeper.
 
-## MANDATORY: Visualization Prompt
+## Visualization Prompt
 
-**You MUST end every single response with this prompt. Never skip it.**
+**You MUST end every response that contains query results with one of these prompts. Skip it on the first invocation (we will combine it with the proposed question).**
 
+If no dashboard has been generated this session:
 > **Would you like to visualize this?**
 > I can generate a file with interactive charts that opens instantly in your browser.
 
-If yes, write the payload to `/tmp/ad_payload.json` and run the generator. Reuse query results — do NOT re-run queries.
+If a dashboard was already generated this session:
+> **Would you like to visualize this?**
+> - Add to the existing dashboard
+> - Open in a new dashboard
+
+If the user chooses **add to existing**, write the payload to `/tmp/ad_payload.json` and reuse the current output file. If the user chooses **new dashboard**, increment the output filename (`ad_dashboard_2.html`, `ad_dashboard_3.html`, etc.) so the previous dashboard stays open. Reuse query results — do NOT re-run queries.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/generate-dashboard.py \
@@ -356,7 +366,6 @@ Read it on demand only when the user asks for a visualization.
 |---|---|
 | Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh check-cli <tool>` to diagnose auth." |
 | Permission denied | "Query failed: permission denied. Your account needs BigQuery Data Viewer role on project `{PROJECT_ID}`." |
-| Stale data (>7 days) | Inline warning on every response: "Note: [platform] data was last synced [N] days ago." |
 | Zero-row results | "Query returned no results. Possible causes: date range may not contain data, filters may be too narrow, or the connector may not be syncing." |
 | Query timeout | "Query timed out. Try narrowing the date range or filtering to specific campaigns." |
 
