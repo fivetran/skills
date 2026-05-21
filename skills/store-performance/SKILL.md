@@ -96,10 +96,6 @@ This skill uses a local profile at `~/.fivetran/skills/store-performance/profile
 
 > **Note:** the verified query patterns below assume Snowflake syntax and `model_tier == raw`. For BigQuery / Databricks, adapt identifier quoting/case as needed. The `"order"` table is reserved across all three engines — quote it.
 
-### Demo / preconfigured profile
-
-For demos — showing the skill against a fixed warehouse without standing up a real Fivetran account — copy `${CLAUDE_PLUGIN_ROOT}/skills/store-performance/local/profile.example.json` to `~/.fivetran/skills/store-performance/profile.json` (or set `STORE_PERFORMANCE_PROFILE_PATH`), then edit `database` and the connector's `raw_schema` to point at your demo warehouse and Shopify-shaped dataset (e.g. `database = "ECOMMERCE_ANALYZER"`, `raw_schema = "SHOPIFY"`). Invoke the skill normally; `validate` passes and the rest of the flow runs against the demo data. Delete the profile to return to first-run state.
-
 ### Tables the skill expects (the 7 v1 tables — Fivetran-Shopify schema)
 
 | Table | Grain | Use for |
@@ -199,8 +195,7 @@ WHERE _fivetran_deleted = FALSE;
 
 **If any table is missing or empty:** Tell the user "The Shopify connector
 data isn't loaded into `{DATABASE}.{SCHEMA}`. Connect Shopify in your
-Fivetran account so it syncs to this destination, or check the demo profile
-template at `${CLAUDE_PLUGIN_ROOT}/skills/store-performance/local/`."
+Fivetran account so it syncs to this destination."
 
 **If `latest_order` is > 7 days old:** Warn on every response: "Note: latest
 order in the data is `<date>`. Results don't reflect the last `<n>` days."

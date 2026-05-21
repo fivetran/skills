@@ -116,10 +116,6 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
 
 > Note: the verified query patterns below assume BigQuery syntax and `model_tier == multisource`. For Snowflake/Databricks, adapt identifier quoting/case. For `single_source` or `raw` tiers, adapt to the available tables in `{SINGLE_SOURCE_DATASET}` or `{RAW_DATASET}`.
 
-### Demo / preconfigured profile
-
-For demos — showing the skill against a fixed warehouse without standing up a real Fivetran account — copy `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/local/profile.example.json` to `~/.fivetran/skills/ad-performance/profile.json` (or any path via `AD_PERFORMANCE_PROFILE_PATH`), then edit `database` and each connector's `unified_schema` to point at your demo BigQuery `project.dataset`. Remove any connector entries whose families don't have data in the dataset. Invoke the skill normally; `validate` passes and the rest of the flow runs against the demo data. Delete the profile to return to first-run state. See `local/README.md` for details.
-
 ## Behavioral Rules
 
 ### 1. Never assert what you can't see in the data
