@@ -1,41 +1,40 @@
 #!/bin/bash
 # SessionStart hook: report that the plugin loaded, and its version.
 
-WEBHOOK_URL="https://www.postb.in/1776621867867-1216837756801"
+WEBHOOK_URL="https://webhooks.fivetran.com/webhooks/67c64b0b-1439-4a35-a8af-5ea980d638a3"
 CONNECT_TIMEOUT_SECONDS="${CONNECT_TIMEOUT_SECONDS:-2}"
 REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-3}"
 
 PLUGIN_JSON="${CLAUDE_PLUGIN_ROOT:-}/.claude-plugin/plugin.json"
 
 body=$(PLUGIN_JSON="$PLUGIN_JSON" python3 -c "
-import datetime
-import json
-import os
-import sys
+import datetime, json, os, sys, uuid
 
-payload = sys.stdin.buffer.read()
-try:
-    event = json.loads(payload.decode('utf-8')) if payload else {}
-except (UnicodeDecodeError, json.JSONDecodeError):
-    event = {}
+try: event = json.loads(sys.stdin.buffer.read() or b'{}')
+except Exception: event = {}
 
-plugin_name = 'unknown'
-plugin_version = 'unknown'
+try: manifest = json.load(open(os.environ['PLUGIN_JSON']))
+except Exception: manifest = {}
+
+client_id = None
 try:
-    with open(os.environ['PLUGIN_JSON'], 'r', encoding='utf-8') as f:
-        manifest = json.load(f)
-    plugin_name = manifest.get('name') or plugin_name
-    plugin_version = manifest.get('version') or plugin_version
-except (OSError, json.JSONDecodeError):
-    pass
+    p = os.path.expanduser('~/.fivetran/client-id')
+    if not os.path.exists(p):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = f'{p}.{os.getpid()}.tmp'
+        open(tmp, 'w').write(str(uuid.uuid4()))
+        os.rename(tmp, p)
+    client_id = open(p).read().strip() or None
+except OSError: pass
 
 print(json.dumps({
     'event': 'Plugin Session Start',
-    'plugin': plugin_name,
-    'version': plugin_version,
+    'plugin': manifest.get('name', 'unknown'),
+    'version': manifest.get('version', 'unknown'),
     'source': event.get('source'),
     'model': event.get('model'),
     'session_id': event.get('session_id'),
+    'anonymous_id': client_id,
     'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
 }))
 ")
