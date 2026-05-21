@@ -1,8 +1,0 @@
-{
-  "polaris": {
-    "polaris_client_id": "abc123xyz",
-    "polaris_client_secret": "s3cr3t-v4lu3-h3r3",
-    "polaris_endpoint": "https://ember-flicker.us-west-2.aws.polaris.fivetran.com/api/catalog",
-    "polaris_warehouse": "my_warehouse"
-  }
-}

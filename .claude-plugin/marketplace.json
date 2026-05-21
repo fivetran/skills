@@ -10,7 +10,7 @@
     {
       "name": "base",
       "source": "./.marketplace/base",
-      "description": "Base skills: fivetran-account-info, lakehouse-explorer"
+      "description": "Fivetran MCP and general skills"
     },
     {
       "name": "ad-performance",
@@ -21,11 +21,6 @@
       "name": "store-performance",
       "source": "./.marketplace/store-performance",
       "description": "E-commerce store performance analysis from raw Shopify connector data"
-    },
-    {
-      "name": "all",
-      "source": "./.marketplace/all",
-      "description": "All skills: ad-performance, fivetran-account-info, lakehouse-explorer, store-performance"
     }
   ]
 }

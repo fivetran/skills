@@ -2,7 +2,7 @@
   "author": {
     "name": "Fivetran"
   },
-  "description": "Base skills: fivetran-account-info, lakehouse-explorer",
+  "description": "Fivetran MCP and general skills",
   "name": "base",
   "userConfig": {
     "fivetran_allow_writes": {
@@ -27,5 +27,5 @@
       "type": "string"
     }
   },
-  "version": "1.0.1"
+  "version": "1.0.2"
 }

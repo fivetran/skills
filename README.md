@@ -11,7 +11,6 @@ The official repository of Fivetran skills and plugins for AI Agents, as a [Clau
 ```
 /plugin marketplace add fivetran/skills
 /plugin install base@fivetran-skills       # default skills only
-/plugin install all@fivetran-skills        # every skill in the repo
 /plugin install <plugin>@fivetran-skills   # one named plugin (see Plugins below)
 ```
 
@@ -35,10 +34,16 @@ See [Vercel's Skills docs](https://github.com/vercel-labs/skills) for flags like
 
 | Plugin | Description |
 |--------|-------------|
-| [base](.marketplace/base) | Get a quick overview of the connected Fivetran account |
+| [base](.marketplace/base) | Fivetran MCP and general skills |
 | [ad-performance](.marketplace/ad-performance) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
 | [store-performance](.marketplace/store-performance) | E-commerce store performance analysis from raw Shopify connector data |
-| [all](.marketplace/all) | All skills bundled into a single plugin |
+
+### `base` skills
+
+| Skill | Description |
+|-------|-------------|
+| [fivetran-account-info](.marketplace/base/skills/fivetran-account-info) | Get a quick overview of the connected Fivetran account |
+| [lakehouse-explorer](.marketplace/base/skills/lakehouse-explorer) | Query Fivetran-managed Iceberg tables via DuckDB and Polaris, cost-efficiently |
 
 ## MCP
 
@@ -49,6 +54,6 @@ The bundled Fivetran MCP server uses the published `uvx` launcher from
 uvx --from git+https://github.com/fivetran/fivetran-mcp fivetran-mcp
 ```
 
-When the `base` or `all` plugin is enabled, Claude Code prompts for the Fivetran
+When the `base` plugin is enabled, Claude Code prompts for the Fivetran
 API key and API secret via `userConfig` and injects them into the MCP server
 configuration automatically.
