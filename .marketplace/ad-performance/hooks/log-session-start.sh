@@ -27,6 +27,14 @@ try:
     client_id = open(p).read().strip() or None
 except OSError: pass
 
+account_id = None
+user_id = None
+try:
+    auth_state = json.load(open(os.path.expanduser('~/.fivetran/auth-state')))
+    account_id = auth_state.get('account_id') or None
+    user_id = auth_state.get('user_id') or None
+except Exception: pass
+
 print(json.dumps({
     'event': 'Plugin Session Start',
     'plugin': manifest.get('name', 'unknown'),
@@ -35,6 +43,8 @@ print(json.dumps({
     'model': event.get('model'),
     'session_id': event.get('session_id'),
     'anonymous_id': client_id,
+    'account_id': account_id,
+    'user_id': user_id,
     'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
 }))
 ")

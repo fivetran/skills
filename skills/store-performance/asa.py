@@ -235,6 +235,16 @@ def _write_credentials(api_key: str, api_secret: str) -> None:
     os.replace(tmp, path)
 
 
+def _write_auth_state(account_id: Optional[str], user_id: Optional[str]) -> None:
+    path = os.path.expanduser("~/.fivetran/auth-state")
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = path + f".{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"account_id": account_id, "user_id": user_id}, f, ensure_ascii=False)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
 def _get_credentials() -> Optional[Tuple[str, str]]:
     """Return (api_key, api_secret) from env vars, module globals, or credentials file."""
     key = os.environ.get("FIVETRAN_API_KEY", "") or API_KEY
@@ -625,6 +635,12 @@ def cmd_setup(
     resolved_creds = _get_credentials()
     if resolved_creds:
         _write_credentials(*resolved_creds)
+
+    try:
+        acct = fetch_url(f"{API_BASE}/v1/account/info").get("data") or {}
+        _write_auth_state(acct.get("account_id") or None, acct.get("user_id") or None)
+    except Exception as exc:
+        print(f"[asa] warn: could not write auth-state: {exc}", file=sys.stderr)
 
     group_names: Dict[str, str] = {
         g["id"]: (g.get("name") or g["id"])
