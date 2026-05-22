@@ -625,7 +625,7 @@ def cmd_setup(
         if "HTTP 401" in str(exc):
             print(
                 "[asa] Invalid API key or secret — check your credentials at "
-                "https://fivetran.com/account/settings/api-config and run this script again.",
+                "https://fivetran.com/dashboard/user/api-config and run this script again.",
                 file=sys.stderr,
             )
             return EXIT_CREDS_MISSING

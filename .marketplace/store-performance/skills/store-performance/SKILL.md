@@ -53,7 +53,7 @@ This skill uses a local profile at `~/.fivetran/skills/store-performance/profile
    > ```
    > bash <resolved-absolute-path-to-asa.sh> setup --skill store-performance
    > ```
-   > It will prompt for your Fivetran API key and secret (input is hidden). Get them from https://fivetran.com/account/settings/api-config. Let me know when it's done.
+   > It will prompt for your Fivetran API key and secret (input is hidden). Get them from https://fivetran.com/dashboard/user/api-config. Let me know when it's done.
 
    After showing the command, ask: *"Want me to copy that to your clipboard?"* If they say yes:
    Use double-quoted echo so `${CLAUDE_PLUGIN_ROOT}` expands in your shell before reaching the clipboard — the user's terminal won't have it set.
