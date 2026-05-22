@@ -309,7 +309,7 @@ Compute all derived metrics in SQL. Always use NULLIF to prevent division by zer
 ### Step 1: Readiness Check (first invocation only)
 Run the readiness queries above. Report which platforms are available and the latest data date for each.
 
-Then close with 2–3 useful starter questions tailored to the available platforms and active models. Present them under a "What would you like to analyze?" heading, and follow with a single line offering visualization: *"Would you like results visualized as an interactive dashboard?"*
+Then close with 2-3 useful starter questions tailored to the available platforms and active models. Present them under a "What would you like to analyze?" heading, and follow with a single line offering visualization: *"Would you like results visualized as an interactive dashboard?"* Do not omit these starter questions or the visualization line.
 
 ### Step 2: Understand the Question
 Parse the user's question. Identify:
@@ -318,6 +318,8 @@ Parse the user's question. Identify:
 - **What time period?** (default: last 30 days relative to latest data date)
 - **Any filters?** (specific platform, account, campaign, active only)
 - **Cross-channel?** If the question involves comparing platforms, always query the unified tables with `platform` in the GROUP BY
+
+If the user uses a business term that is not a physical column or explicit warehouse value (for example `brand`, `prospecting`, `retargeting`, or `waste`), infer the narrowest reasonable rule from values you discover in the data such as campaign names, ad group names, ad names, or keyword text, disclose that inferred rule before presenting metrics, and tell the user they can override it. Do not present an inferred filter as if the user defined it precisely.
 
 ### Step 3: Write and Run Queries
 Use the appropriate dataset for the `model_tier`. Run multiple queries for depth:
@@ -328,12 +330,15 @@ Use the appropriate dataset for the `model_tier`. Run multiple queries for depth
 
 ### Step 4: Present Results
 
+- Present results in this order: scope line (date range, platforms included, notable exclusions), main markdown table, factual summary, explicit anomaly statement, then suggested follow-up questions.
+- If you used an inferred business-term filter, put a one-line assumption disclosure before the scope line.
 - Show data as a clean **markdown table** with period-over-period (current vs prior, with % change)
-- Below the table, write a **factual summary** (2–3 sentences): what the data shows, significant changes, anomalies
+- Below the table, write a **factual summary** (2-3 sentences): what the data shows, significant changes, anomalies
+- Include an explicit anomaly statement even when nothing is notable. If no anomaly crossed your threshold, say so directly.
+- Then show **2-3 suggested follow-up questions** that drill deeper.
 - Do NOT show SQL queries in the response. The user does not want to see SQL.
 - State the date range and which platforms contributed
-
-Then show **2–3 suggested follow-up questions** that drill deeper.
+- Do not stop after the table or summary.
 
 ## Visualization Prompt
 
@@ -349,6 +354,8 @@ If a dashboard was already generated this session:
 > - Open in a new dashboard
 
 If the user chooses **add to existing**, write the payload to `/tmp/ad_payload.json` and reuse the current output file. If the user chooses **new dashboard**, increment the output filename (`ad_dashboard_2.html`, `ad_dashboard_3.html`, etc.) so the previous dashboard stays open. Reuse query results — do NOT re-run queries.
+
+For normal dashboard requests, use this payload plus `generate-dashboard.py` flow. Only create custom HTML directly if the request cannot be represented with the payload schema in [`dashboard-schema.md`](./dashboard-schema.md).
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/generate-dashboard.py \
