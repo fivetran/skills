@@ -2,13 +2,15 @@
 name: ad-performance
 description: >
   Answer ad performance questions using data from Fivetran's ad connectors via BigQuery, Snowflake, or Databricks.
-  Cross-channel analysis across Google Ads, Facebook Ads, and Microsoft Ads.
+  Cross-channel analysis across Google Ads, Facebook Ads, Microsoft Ads, LinkedIn Ads, TikTok Ads, Pinterest Ads, and Snapchat Ads.
   Use when someone asks about ad spend, impressions, clicks, conversions, CPC, CPM, ROAS, CTR,
   or any advertising metrics. Supports cross-channel comparison, campaign drill-down, trend analysis,
   keyword performance, and anomaly detection.
   Trigger on: "how are our ads performing", "ad spend", "campaign performance",
   "cost per click", "ROAS", "impressions", "CTR", "ad performance", "marketing analytics",
-  "compare channels", "cross-channel", "Facebook vs Google", "budget allocation".
+  "compare channels", "cross-channel", "Facebook vs Google", "budget allocation",
+  "LinkedIn ads", "TikTok ads", "Pinterest ads", "Snapchat ads", "LinkedIn performance",
+  "TikTok performance", "Pinterest performance", "Snapchat performance".
 allowed-tools: "bash(bq, gcloud, snow, snowsql, databricks, open, python3, pip)"
 metadata:
   plugin: ad-performance
@@ -142,13 +144,16 @@ On every query, scan for:
 Report these as facts, not opinions.
 
 ### 5. Suggest follow-ups that go deeper, not sideways
-After every answer, suggest 2–3 follow-up questions that drill into the data just presented. These should help the user find actionable waste or opportunity.
+After every answer, suggest 2–3 follow-up questions that drill into the data just presented. Only suggest follow-ups that use tables present in `active_models` — do not suggest keyword, ad group, search, or geographic drill-downs if the corresponding model is in `excluded_models`. These should help the user find actionable waste or opportunity.
 
 ### 6. Do NOT show SQL in responses
 Run queries behind the scenes. The user only sees the results, not the queries. Do not include SQL code blocks in your response.
 
 ### 7. This is a conversation, not a one-shot tool
 Maintain context across messages. If the user asked about Google Ads and then says "now compare with Facebook," build on prior queries.
+
+### 8. Only surface platforms with active data
+After the readiness check, treat the platforms returning recent data as the working set for this session. Do not proactively suggest prompted questions for platforms absent from the readiness output. 
 
 ## Readiness Check
 
@@ -396,7 +401,7 @@ SELECT
   ROUND(SUM(clicks) / NULLIF(SUM(impressions), 0) * 100, 2) as ctr_pct,
   ROUND(SUM(conversions_value) / NULLIF(SUM(spend), 0), 2) as roas
 FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
-WHERE date_day >= DATE_SUB(
+WHERE date_day > DATE_SUB(
   (SELECT MAX(date_day) FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`),
   INTERVAL 30 DAY
 )
@@ -433,7 +438,7 @@ SELECT
   ROUND(SUM(conversions_value) / NULLIF(SUM(spend), 0), 2) as roas,
   ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2) as cost_per_conversion
 FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
-WHERE date_day >= DATE_SUB(
+WHERE date_day > DATE_SUB(
   (SELECT MAX(date_day) FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`),
   INTERVAL 30 DAY
 )
@@ -451,7 +456,7 @@ SELECT
   SUM(clicks) as weekly_clicks,
   ROUND(SUM(clicks) / NULLIF(SUM(impressions), 0) * 100, 2) as ctr_pct
 FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
-WHERE date_day >= DATE_SUB(
+WHERE date_day > DATE_SUB(
   (SELECT MAX(date_day) FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`),
   INTERVAL 90 DAY
 )
@@ -474,7 +479,7 @@ SELECT * FROM (
     ROUND(SUM(conversions), 1) as total_conversions,
     ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2) as cost_per_conversion
   FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__keyword_report`
-  WHERE date_day >= DATE_SUB(
+  WHERE date_day > DATE_SUB(
     (SELECT MAX(date_day) FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__keyword_report`),
     INTERVAL 30 DAY
   )
@@ -487,19 +492,20 @@ LIMIT 20
 
 ### Period-over-period comparison template
 ```sql
-WITH date_bounds AS (
-  SELECT MAX(date_day) as latest FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
+WITH latest AS (
+  SELECT MAX(date_day) AS date FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
 ),
 current_period AS (
   SELECT platform, SUM(spend) as spend, SUM(clicks) as clicks, SUM(impressions) as impressions, SUM(conversions) as conversions, SUM(conversions_value) as conv_value
-  FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`, date_bounds
-  WHERE date_day > DATE_SUB(latest, INTERVAL 30 DAY)
+  FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
+  WHERE date_day > DATE_SUB((SELECT date FROM latest), INTERVAL 30 DAY)
   GROUP BY platform
 ),
 prior_period AS (
   SELECT platform, SUM(spend) as spend, SUM(clicks) as clicks, SUM(impressions) as impressions, SUM(conversions) as conversions, SUM(conversions_value) as conv_value
-  FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`, date_bounds
-  WHERE date_day BETWEEN DATE_SUB(latest, INTERVAL 60 DAY) AND DATE_SUB(latest, INTERVAL 30 DAY)
+  FROM `{PROJECT_ID}.{UNIFIED_DATASET}.ad_reporting__campaign_report`
+  WHERE date_day > DATE_SUB((SELECT date FROM latest), INTERVAL 60 DAY)
+    AND date_day <= DATE_SUB((SELECT date FROM latest), INTERVAL 30 DAY)
   GROUP BY platform
 )
 SELECT
