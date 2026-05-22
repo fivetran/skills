@@ -18,6 +18,11 @@
       "description": "Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks"
     },
     {
+      "name": "hubspot-sales-pipeline",
+      "source": "./.marketplace/hubspot-sales-pipeline",
+      "description": "HubSpot sales pipeline funnel and rep performance analysis"
+    },
+    {
       "name": "store-performance",
       "source": "./.marketplace/store-performance",
       "description": "E-commerce store performance analysis from raw Shopify connector data"
