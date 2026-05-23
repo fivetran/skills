@@ -82,6 +82,15 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
      ```
      Families with a single active connection auto-resolve without any flag.
    - `53` (insufficient connectors) — no active ad connectors were found on the chosen destination. Parse the JSON from stdout: it lists `required_pool`, `found`, and `min_required_count`. Tell the user: "No supported ad platform connectors are active on this destination. Connect at least one of: {required_pool}." Stop.
+   - `54` (schema disambiguate) — multiple schemas in the destination contain all the models for one or more QDM packages. Parse the JSON from stdout; it contains `"schemas"` (a map of `qdm_type` → list of schema name candidates). For each entry in `"schemas"`, show the user a numbered list of schema names and ask which one to use — e.g. *"I found two schemas that both contain your ad reporting models. Which should I use?"* Once the user picks, **run setup yourself** with `--schema` for each chosen schema:
+     ```bash
+     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance \
+       --destination-id <dest_id> \
+       --schema multisource_ad_reporting=<chosen_schema> \
+       --schema single_source_facebook_ads=<chosen_schema> 2>&1; echo "EXIT:$?"
+       # add one --schema flag per entry in "schemas" that needed disambiguation
+     ```
+     The chosen schema is persisted in the profile and won't be asked again on future refreshes. Use `--no-schema` to clear all persisted schema overrides.
    - any other non-zero — relay the stderr message and stop.
 
 3. **Resolve connector context.** For each ad connector relevant to the user's question (`google_ads`, `facebook_ads`, `bingads`, `linkedin_ads`, `tiktok_ads`, `pinterest_ads`, `snapchat_ads`), call:
@@ -355,7 +364,7 @@ If a dashboard was already generated this session:
 
 If the user chooses **add to existing**, write the payload to `/tmp/ad_payload.json` and reuse the current output file. If the user chooses **new dashboard**, increment the output filename (`ad_dashboard_2.html`, `ad_dashboard_3.html`, etc.) so the previous dashboard stays open. Reuse query results — do NOT re-run queries.
 
-For normal dashboard requests, use this payload plus `generate-dashboard.py` flow. Only create custom HTML directly if the request cannot be represented with the payload schema in [`dashboard-schema.md`](./dashboard-schema.md).
+**Building the payload:** Reuse or re-fetch query results with `--format=json` to get structured rows. Compute all KPI values, chart data arrays, and table row strings in a Python snippet — do not transcribe numbers from terminal output by hand. Write the result to the payload file with `json.dump` before invoking `generate-dashboard.py`.
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/generate-dashboard.py \

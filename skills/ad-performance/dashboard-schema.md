@@ -49,6 +49,7 @@ All sections are optional except `title`.
 - `table.rows._row_class`: `"highlight-waste"` (red tint), `"highlight-winner"` (green tint), `"highlight-caution"` (yellow tint).
 - `custom_sections` injects raw HTML cards — use for non-Chart.js content, geographic tables, etc.
 - Run `python3 generate-dashboard.py --help-schema` for the full schema reference.
+- **Derive all values from query results — never type them manually.** Every `kpis[].value`, `kpis[].change`, `kpis[].prior`, and numeric string in `table.rows` must be computed from the same structured query output used to build the charts. Run queries with `--format=json` to get machine-readable rows, compute totals and formatted strings in Python, then write the payload. Transcribing numbers from terminal output by hand causes KPI/chart mismatches.
 
 ## Escape hatch (rare)
 

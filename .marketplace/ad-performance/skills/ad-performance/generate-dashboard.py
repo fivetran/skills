@@ -81,8 +81,8 @@ Row classes for table._row_class:
   (omit or empty string for default)
 
 Escape hatch: if a dashboard requires a non-card/grid/table structure (multi-page layout,
-non-Chart.js library, embedded tooling), read templates/dashboard.html directly and write
-HTML manually instead of using this script. This should be rare.
+non-Chart.js library, embedded tooling), write HTML manually instead of using this script.
+This should be rare.
 """
 
 import argparse
@@ -92,8 +92,75 @@ import pathlib
 import sys
 
 SCRIPT_DIR = pathlib.Path(__file__).parent
-DEFAULT_TEMPLATE = SCRIPT_DIR.parent / "templates" / "dashboard.html"
+DEFAULT_TEMPLATE = None  # use INLINE_TEMPLATE by default; --template overrides
 DEFAULT_OUTPUT = pathlib.Path("/tmp/dashboard.html")
+
+INLINE_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #F8F9FA; color: #1A1A2E; padding: 24px; }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 24px; font-weight: 700; color: #0073FF; }
+    .header p { font-size: 14px; color: #6B7280; margin-top: 4px; }
+    .badge { display: inline-block; background: #FEF3C7; color: #92400E; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 12px; margin-top: 8px; }
+    .kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+    .kpi-card { flex: 1; min-width: 160px; background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; }
+    .kpi-card .label { font-size: 12px; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .kpi-card .value { font-size: 28px; font-weight: 700; color: #111827; }
+    .kpi-card .change { font-size: 13px; font-weight: 600; margin-top: 4px; }
+    .kpi-card .change.positive { color: #059669; }
+    .kpi-card .change.negative { color: #DC2626; }
+    .kpi-card .change.neutral { color: #6B7280; }
+    .kpi-card .prior { font-size: 12px; color: #9CA3AF; margin-top: 4px; }
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .chart-grid.full { grid-template-columns: 1fr; }
+    .chart-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; }
+    .chart-card h2 { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
+    .anomaly-card { background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+    .anomaly-card h2 { font-size: 14px; font-weight: 600; color: #92400E; margin-bottom: 10px; }
+    .anomaly-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; font-size: 13px; color: #78350F; }
+    .anomaly-dot { width: 6px; height: 6px; background: #F59E0B; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+    .table-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+    .table-card h2 { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { border-bottom: 2px solid #E5E7EB; }
+    th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6B7280; }
+    th.number, td.number { text-align: right; }
+    td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; color: #374151; }
+    tr:last-child td { border-bottom: none; }
+    .tier-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+    .tier-winner { background: #D1FAE5; color: #065F46; }
+    .tier-waste { background: #FEE2E2; color: #991B1B; }
+    .tier-caution { background: #FEF3C7; color: #92400E; }
+    .footer { font-size: 12px; color: #9CA3AF; text-align: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid #E5E7EB; }
+  </style>
+</head>
+<body>
+<!-- HEADER -->
+<!-- KPI_ROW -->
+<!-- CHART_GRID -->
+<!-- ANOMALIES -->
+<!-- TABLE -->
+<!-- CUSTOM_SECTIONS -->
+<!-- FOOTER -->
+<script>
+  const fivetranColors = ['#0073FF','#00C4B4','#FF6B6B','#FFB347','#7C3AED','#10B981','#F59E0B','#EF4444'];
+  const chartDefaults = { responsive: true, maintainAspectRatio: false };
+  Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  Chart.defaults.font.size = 12;
+  Chart.defaults.plugins.legend.labels.boxWidth = 12;
+<!-- CHART_SCRIPTS -->
+</script>
+</body>
+</html>
+"""
 
 
 def esc(text):
@@ -208,10 +275,11 @@ def build_table(table):
     if not columns:
         return ""
 
-    header_cells = "".join(
-        f'<th{"" if col.get("align", "left") == "left" else " class=\"number\""}>{esc(col.get("label", ""))}</th>'
-        for col in columns
-    )
+    header_cells = []
+    for col in columns:
+        align_class = "" if col.get("align", "left") == "left" else ' class="number"'
+        header_cells.append(f'<th{align_class}>{esc(col.get("label", ""))}</th>')
+    header_cells = "".join(header_cells)
     body_rows = []
     for row in rows:
         row_class = row.get("_row_class", "")
@@ -263,7 +331,10 @@ def build_footer(data):
 
 
 def render(template_path, data):
-    template = pathlib.Path(template_path).read_text(encoding="utf-8")
+    if template_path is None:
+        template = INLINE_TEMPLATE
+    else:
+        template = pathlib.Path(template_path).read_text(encoding="utf-8")
 
     header_html = build_header(data)
     kpi_html = build_kpi_row(data.get("kpis", []))
@@ -307,8 +378,8 @@ def main():
     parser.add_argument("--data", help="Path to JSON payload file (default: read from stdin)")
     parser.add_argument(
         "--template",
-        default=str(DEFAULT_TEMPLATE),
-        help=f"Path to dashboard.html template (default: {DEFAULT_TEMPLATE})",
+        default=None,
+        help="Path to an HTML template file (default: use built-in inline template)",
     )
     parser.add_argument(
         "--output",

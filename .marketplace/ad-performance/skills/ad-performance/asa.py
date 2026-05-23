@@ -4,10 +4,12 @@ asa.py — unified ad-performance entry point.
 
 Subcommands:
   validate                                    # 0=ok | 60=missing | 61=invalid
-  setup [--destination-id X]                 # 0=ok | 51/52/53=disambiguate | 62=creds missing (non-tty)
+  setup [--destination-id X]                 # 0=ok | 51/52/53/54=disambiguate | 62=creds missing (non-tty)
         [--connection FAM=ID ...]
+        [--schema QDM_TYPE=SCHEMA_NAME ...]  # override schema for a QDM type (persisted)
         [--skip-family FAM ...]              # skip a family (persisted across refreshes)
         [--no-skip]                          # clear all persisted skips
+        [--no-schema]                        # clear all persisted schema overrides
         [--refresh] [--skill <id>]
   resolve <family> [--refresh-on-miss]       # prints JSON to stdout
   readiness [FAM ...]                         # parallel data-freshness probe across active_models
@@ -36,6 +38,7 @@ EXIT_OK                       = 0
 EXIT_DESTINATION_DISAMBIGUATE = 51
 EXIT_CONNECTION_DISAMBIGUATE  = 52
 EXIT_INSUFFICIENT_CONNECTORS  = 53
+EXIT_SCHEMA_DISAMBIGUATE      = 54
 EXIT_PROFILE_MISSING          = 60
 EXIT_PROFILE_INVALID          = 61
 EXIT_CREDS_MISSING            = 62
@@ -323,49 +326,25 @@ def _probe_schema(
     database: str,
     location: str,
     model_names: List[str],
-    last_ended_at: Optional[str],
-) -> Optional[str]:
-    """Find which schema contains all output_model_names. Returns schema name or None."""
+) -> List[str]:
+    """Find all schemas containing every output_model_name. Returns list of matching schema names."""
     if MOCK_FETCHER or not model_names or not database:
-        return None
+        return []
     try:
         if dest_type == "bigquery":
-            return _probe_schema_bq(database, location, model_names, last_ended_at)
+            return _probe_schema_bq(database, location, model_names)
         if dest_type == "snowflake":
-            return _probe_schema_snowflake(database, model_names, last_ended_at)
+            return _probe_schema_snowflake(database, model_names)
         if dest_type == "databricks":
-            return _probe_schema_databricks(database, model_names, last_ended_at)
+            return _probe_schema_databricks(database, model_names)
     except Exception as exc:
         print(f"[asa] warn: schema probe failed: {exc}", file=sys.stderr)
-    return None
-
-
-def _tiebreak(
-    candidates: List[str],
-    last_ended_at: str,
-    get_last_mod_fn,  # callable(schema) -> Optional[str] ISO timestamp
-) -> Optional[str]:
-    try:
-        ended = _parse_iso8601(last_ended_at).timestamp()
-    except Exception:
-        return None
-    best_schema, best_delta = None, float("inf")
-    for schema in candidates:
-        last_mod_str = get_last_mod_fn(schema)
-        if not last_mod_str:
-            continue
-        try:
-            delta = abs(_parse_iso8601(last_mod_str).timestamp() - ended)
-            if delta < best_delta:
-                best_delta, best_schema = delta, schema
-        except Exception:
-            continue
-    return best_schema
+    return []
 
 
 def _probe_schema_bq(
-    project: str, location: str, model_names: List[str], last_ended_at: Optional[str]
-) -> Optional[str]:
+    project: str, location: str, model_names: List[str],
+) -> List[str]:
     region = f"region-{location.lower()}" if location else "region-us"
     names_sql = ", ".join(f"'{n}'" for n in model_names)
     sql = (
@@ -377,28 +356,13 @@ def _probe_schema_bq(
     )
     rows = _bq_query(sql)
     if not rows:
-        return None
-    schemas = [r.get("table_schema") for r in rows if r.get("table_schema")]
-    if not schemas:
-        return None
-    if len(schemas) == 1 or not last_ended_at:
-        return schemas[0]
-
-    def get_last_mod(schema: str) -> Optional[str]:
-        r2 = _bq_query(
-            f"SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', "
-            f"TIMESTAMP_MICROS(MAX(last_modified_time))) AS last_mod "
-            f"FROM `{project}.{schema}.__TABLES__`",
-            timeout=20,
-        )
-        return (r2[0].get("last_mod") if r2 else None)
-
-    return _tiebreak(schemas, last_ended_at, get_last_mod) or schemas[0]
+        return []
+    return [r.get("table_schema") for r in rows if r.get("table_schema")]
 
 
 def _probe_schema_snowflake(
-    database: str, model_names: List[str], last_ended_at: Optional[str]
-) -> Optional[str]:
+    database: str, model_names: List[str],
+) -> List[str]:
     names_sql = ", ".join(f"'{n.upper()}'" for n in model_names)
     sql = (
         f"SELECT TABLE_SCHEMA, COUNT(*) AS matched "
@@ -409,7 +373,7 @@ def _probe_schema_snowflake(
     )
     rows = _snow_query(sql)
     if not rows:
-        return None
+        return []
 
     def get_schema(row):
         if isinstance(row, dict):
@@ -418,33 +382,12 @@ def _probe_schema_snowflake(
             return str(row[0])
         return None
 
-    schemas = [s for s in (get_schema(r) for r in rows) if s]
-    if not schemas:
-        return None
-    if len(schemas) == 1 or not last_ended_at:
-        return schemas[0]
-
-    def get_last_mod(schema: str) -> Optional[str]:
-        r2 = _snow_query(
-            f"SELECT TO_CHAR(MAX(LAST_ALTERED), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS last_mod "
-            f"FROM {database}.INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = UPPER('{schema}')",
-            timeout=20,
-        )
-        if not r2:
-            return None
-        row2 = r2[0]
-        if isinstance(row2, dict):
-            return row2.get("LAST_MOD") or row2.get("last_mod")
-        if isinstance(row2, list) and row2:
-            return str(row2[0])
-        return None
-
-    return _tiebreak(schemas, last_ended_at, get_last_mod) or schemas[0]
+    return [s for s in (get_schema(r) for r in rows) if s]
 
 
 def _probe_schema_databricks(
-    catalog: str, model_names: List[str], last_ended_at: Optional[str]
-) -> Optional[str]:
+    catalog: str, model_names: List[str],
+) -> List[str]:
     names_sql = ", ".join(f"'{n}'" for n in model_names)
     sql = (
         f"SELECT table_schema, COUNT(*) AS matched "
@@ -454,12 +397,10 @@ def _probe_schema_databricks(
     )
     rows = _databricks_query(sql)
     if not rows:
-        return None
+        return []
     if isinstance(rows[0], list):
-        schemas = [str(r[0]) for r in rows if isinstance(r, list) and r]
-    else:
-        schemas = [str(rows[0])]
-    return schemas[0] if schemas else None
+        return [str(r[0]) for r in rows if isinstance(r, list) and r]
+    return [str(rows[0])]
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +422,9 @@ def _is_valid_profile(p: dict) -> bool:
         return False
     skipped = p.get("skipped_families")
     if skipped is not None and not isinstance(skipped, list):
+        return False
+    schema_overrides = p.get("schema_overrides")
+    if schema_overrides is not None and not isinstance(schema_overrides, dict):
         return False
     connectors = p.get("connectors")
     if not isinstance(connectors, dict):
@@ -577,6 +521,8 @@ def cmd_setup(
     refresh: bool,
     skip_families: Optional[set] = None,
     clear_skip: bool = False,
+    schema_overrides: Optional[Dict[str, str]] = None,
+    clear_schema_overrides: bool = False,
 ) -> int:
     # Idempotent: skip if profile already valid and not refreshing
     if not refresh:
@@ -608,9 +554,9 @@ def cmd_setup(
             )
             return EXIT_CREDS_MISSING
 
-    # Merge CLI skip flags with persisted state.
-    # clear_skip → wipe; explicit skip_families → replace; neither → preserve.
+    # Merge CLI skip/schema flags with persisted state.
     existing_profile = _read_profile() or {}
+
     existing_skip = set(existing_profile.get("skipped_families") or [])
     if clear_skip:
         final_skip: set = set()
@@ -618,6 +564,14 @@ def cmd_setup(
         final_skip = set(skip_families)
     else:
         final_skip = existing_skip
+
+    existing_schema_overrides: Dict[str, str] = existing_profile.get("schema_overrides") or {}
+    if clear_schema_overrides:
+        final_schema_overrides: Dict[str, str] = {}
+    elif schema_overrides:
+        final_schema_overrides = {**existing_schema_overrides, **schema_overrides}
+    else:
+        final_schema_overrides = dict(existing_schema_overrides)
 
     min_required = SKILL_MIN_REQUIRED.get(skill_id, 1)
 
@@ -835,7 +789,7 @@ def cmd_setup(
             if has_ms and qt.startswith("single_source_"):
                 continue
             needed_qdm_types.add(qt)
-    qdm_schemas: Dict[str, Optional[str]] = {}
+    qdm_schema_candidates: Dict[str, List[str]] = {}
     needed_list = list(needed_qdm_types)
     if needed_list:
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(needed_list))) as pool:
@@ -844,16 +798,39 @@ def cmd_setup(
                     _probe_schema,
                     dest_type, database, location,
                     qdm_registry[qt]["output_model_names"],
-                    qdm_registry[qt]["last_ended_at"],
                 ): qt
                 for qt in needed_list
             }
             for fut in concurrent.futures.as_completed(futures):
                 qt = futures[fut]
                 try:
-                    qdm_schemas[qt] = fut.result()
+                    qdm_schema_candidates[qt] = fut.result()
                 except Exception:
-                    qdm_schemas[qt] = None
+                    qdm_schema_candidates[qt] = []
+
+    # If any QDM type has multiple matching schemas and no override, ask the user to pick.
+    # This must happen before outputting connections/QDMs so setup exits cleanly.
+    needs_schema_disambig: Dict[str, List[str]] = {
+        qt: candidates
+        for qt, candidates in qdm_schema_candidates.items()
+        if len(candidates) > 1 and qt not in final_schema_overrides
+    }
+    if needs_schema_disambig:
+        _agent_print(
+            {"status": "disambiguate_required", "schemas": needs_schema_disambig},
+            "Multiple schemas found. Return to your Claude Code chat to continue setup.",
+        )
+        return EXIT_SCHEMA_DISAMBIGUATE
+
+    # Resolve candidates to a single value per QDM type, applying any overrides.
+    qdm_schemas: Dict[str, Optional[str]] = {}
+    for qt, candidates in qdm_schema_candidates.items():
+        if qt in final_schema_overrides:
+            qdm_schemas[qt] = final_schema_overrides[qt]
+        elif len(candidates) == 1:
+            qdm_schemas[qt] = candidates[0]
+        else:
+            qdm_schemas[qt] = None
 
     # Build connectors dict from picks + probed schemas.
     connectors: Dict[str, dict] = {}
@@ -921,6 +898,7 @@ def cmd_setup(
             "location":         location,
         },
         "skipped_families": sorted(final_skip),
+        "schema_overrides": final_schema_overrides,
         "connectors": connectors,
     }
     _write_profile(profile)
@@ -1243,8 +1221,10 @@ def main() -> int:
     if subcmd == "setup":
         destination_id: Optional[str]     = None
         connection_overrides: Dict[str, str] = {}
+        schema_overrides_arg: Dict[str, str] = {}
         skip_families: set = set()
         clear_skip = False
+        clear_schema_overrides = False
         skill_id = "ad-performance"
         refresh  = False
         i = 0
@@ -1259,10 +1239,19 @@ def main() -> int:
                     return 1
                 fam, cid = pair.split("=", 1)
                 connection_overrides[fam.strip()] = cid.strip(); i += 2
+            elif arg == "--schema" and i + 1 < len(rest):
+                pair = rest[i + 1]
+                if "=" not in pair:
+                    print(f"[asa] --schema requires QDM_TYPE=SCHEMA_NAME, got: {pair!r}", file=sys.stderr)
+                    return 1
+                qt, sname = pair.split("=", 1)
+                schema_overrides_arg[qt.strip()] = sname.strip(); i += 2
             elif arg == "--skip-family" and i + 1 < len(rest):
                 skip_families.add(rest[i + 1].strip()); i += 2
             elif arg == "--no-skip":
                 clear_skip = True; i += 1
+            elif arg == "--no-schema":
+                clear_schema_overrides = True; i += 1
             elif arg == "--skill" and i + 1 < len(rest):
                 skill_id = rest[i + 1]; i += 2
             elif arg == "--refresh":
@@ -1270,7 +1259,7 @@ def main() -> int:
             else:
                 print(f"[asa] unknown argument: {arg!r}", file=sys.stderr)
                 return 1
-        return cmd_setup(destination_id, connection_overrides, skill_id, refresh, skip_families, clear_skip)
+        return cmd_setup(destination_id, connection_overrides, skill_id, refresh, skip_families, clear_skip, schema_overrides_arg or None, clear_schema_overrides)
 
     if subcmd == "resolve":
         if not rest:
