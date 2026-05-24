@@ -282,33 +282,44 @@ def _agent_print(payload: dict, tty_message: str) -> None:
 # Warehouse query helpers (used by schema probe)
 # ---------------------------------------------------------------------------
 
-def _bq_query(sql: str, timeout: int = 30) -> Optional[List[dict]]:
+def _bq_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List[dict]]:
     r = subprocess.run(
         ["bq", "query", "--use_legacy_sql=false", "--format=prettyjson", "--quiet", sql],
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
-        print(f"[asa] warn: bq query failed: {r.stderr.strip()}", file=sys.stderr)
+        msg = r.stderr.strip()
+        print(f"[asa] warn: bq query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     return json.loads(r.stdout.strip() or "[]")
 
 
-def _snow_query(sql: str, timeout: int = 30) -> Optional[List]:
+def _snow_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List]:
     r = subprocess.run(
         ["snow", "sql", "-q", sql, "--output-format", "json"],
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
+        msg = r.stderr.strip()
+        print(f"[asa] warn: snow query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     return json.loads(r.stdout.strip() or "[]")
 
 
-def _databricks_query(sql: str, timeout: int = 30) -> Optional[List]:
+def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List]:
     r = subprocess.run(
         ["databricks", "sql", "execute", "--sql", sql],
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
+        msg = r.stderr.strip()
+        print(f"[asa] warn: databricks query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     try:
         data = json.loads(r.stdout)
@@ -546,10 +557,11 @@ def cmd_setup(
             global API_KEY, API_SECRET
             API_KEY, API_SECRET = key, secret
         else:
+            _script_path = os.path.abspath(__file__).replace(".py", ".sh")
             print(
                 "[asa] Fivetran credentials not found.\n"
                 "Run setup in your own terminal (credentials will be prompted securely):\n"
-                "  bash .marketplace/ad-performance/scripts/asa.sh setup --skill <skill-id>",
+                f"  bash {_script_path} setup --skill <skill-id>",
                 file=sys.stderr,
             )
             return EXIT_CREDS_MISSING
@@ -1028,7 +1040,7 @@ _CLI_INFO = {
     "snowflake_cli": {
         "binary":      "snow",
         "missing_msg": "install Snowflake CLI: https://docs.snowflake.com/en/developer-guide/snowflake-cli/installation/installation   (macOS Homebrew: brew install snowflake-cli)",
-        "unauth_msg":  "snow connection add  (or 'snow connection test --connection <name>')",
+        "unauth_msg":  "snow connection add  # or update your existing connection's credentials",
         "auth_cmd":    ["snow", "connection", "test"],
     },
     "databricks_cli": {
@@ -1076,7 +1088,7 @@ def _readiness_query_bq(project: str, schema: str, table: str, timeout: int = 30
         f"SELECT platform, MAX({date_col}) AS latest_date, COUNT(*) AS row_count "
         f"FROM `{project}.{schema}.{table}` GROUP BY platform"
     )
-    return _bq_query(sql, timeout=timeout)
+    return _bq_query(sql, timeout=timeout, raise_on_error=True)
 
 
 def _readiness_query_snow(database: str, schema: str, table: str, timeout: int = 30) -> Optional[List]:
@@ -1085,7 +1097,7 @@ def _readiness_query_snow(database: str, schema: str, table: str, timeout: int =
         f"SELECT platform, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
         f"FROM {database}.{schema}.{table} GROUP BY platform"
     )
-    return _snow_query(sql, timeout=timeout)
+    return _snow_query(sql, timeout=timeout, raise_on_error=True)
 
 
 def _readiness_query_databricks(catalog: str, schema: str, table: str, timeout: int = 30) -> Optional[List]:
@@ -1094,7 +1106,7 @@ def _readiness_query_databricks(catalog: str, schema: str, table: str, timeout: 
         f"SELECT platform, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
         f"FROM {catalog}.{schema}.{table} GROUP BY platform"
     )
-    return _databricks_query(sql, timeout=timeout)
+    return _databricks_query(sql, timeout=timeout, raise_on_error=True)
 
 
 def _probe_table_freshness(

@@ -196,7 +196,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh readiness
 
 Parse the JSON response:
 - `freshness[]` — one row per `(table, platform)` with `latest_date` and `rows`.
-- `errors[]` — tables that failed to query (log to stderr, don't surface to user unless all tables failed).
+- `errors[]` — tables that failed to query. Don't surface unless all tables failed.
+  - When `freshness[]` is empty and `errors[]` is populated, relay the error messages directly to the user — CLI tools (`bq`, `snow`, `databricks`) typically include "Please run: ..." text. If ambiguous, run `bash <path-to-asa.sh> check-cli <warehouse_tool>` yourself to diagnose first (see the Prerequisites section for details).
 - `qdm_last_ended_at` — per-family ISO timestamp of when the dbt transformation last ran.
 - `status: "no_qdm"` — no multisource/single_source connectors found; all connectors are raw tier.
 
