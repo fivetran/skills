@@ -69,10 +69,9 @@ SKILL_MIN_REQUIRED: Dict[str, int] = {
 # ---------------------------------------------------------------------------
 # Environment config
 # ---------------------------------------------------------------------------
-API_BASE     = os.environ.get("FIVETRAN_API_BASE_URL", "https://api.fivetran.com").rstrip("/")
-API_KEY      = os.environ.get("FIVETRAN_API_KEY", "")
-API_SECRET   = os.environ.get("FIVETRAN_API_SECRET", "")
-MOCK_FETCHER = os.environ.get("ASA_FIVETRAN_FETCHER", "")
+API_BASE      = os.environ.get("FIVETRAN_API_BASE_URL", "https://api.fivetran.com").rstrip("/")
+MOCK_FETCHER  = os.environ.get("ASA_FIVETRAN_FETCHER", "")
+_CURRENT_TOKEN: Optional[str] = None  # set by cmd_setup before any HTTP request
 
 
 def _config_dir() -> str:
@@ -94,14 +93,26 @@ def _creds_path() -> str:
     return os.path.join(_config_dir(), "credentials.json")
 
 
+def looks_like_b64_token(s: str) -> bool:
+    """Return True if s is a valid base64-encoded 'key:secret' Fivetran token."""
+    if not s:
+        return False
+    try:
+        decoded = base64.b64decode(s, validate=True).decode("ascii")
+    except Exception:
+        return False
+    if decoded.count(":") != 1:
+        return False
+    key, secret = decoded.split(":", 1)
+    return bool(key) and bool(secret)
+
+
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
 def _auth_header() -> str:
-    creds = _get_credentials()
-    key, secret = creds if creds else ("", "")
-    return "Basic " + base64.b64encode(f"{key}:{secret}".encode()).decode()
+    return "Basic " + (_CURRENT_TOKEN or base64.b64encode(b":").decode())
 
 
 def fetch_url(url: str) -> dict:
@@ -224,15 +235,81 @@ def _read_credentials() -> Optional[dict]:
         return None
 
 
-def _write_credentials(api_key: str, api_secret: str) -> None:
+def _write_credentials(token: str) -> None:
     config_dir = _config_dir()
     os.makedirs(config_dir, mode=0o700, exist_ok=True)
     path = _creds_path()
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"api_key": api_key, "api_secret": api_secret}, f, ensure_ascii=False)
+        json.dump({"token": token}, f, ensure_ascii=False)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
+
+
+def _resolve_credentials() -> Optional[Tuple[str, str]]:
+    """Return (token_b64, source) or None. credentials.json wins over env vars."""
+    # 1. credentials.json — represents a previously-verified token
+    creds = _read_credentials()
+    if creds:
+        token = (creds.get("token") or "").strip()
+        if looks_like_b64_token(token):
+            return token, "credentials.json"
+        # legacy {api_key, api_secret} — migrate transparently
+        key    = (creds.get("api_key")    or "").strip()
+        secret = (creds.get("api_secret") or "").strip()
+        if key and secret:
+            token = base64.b64encode(f"{key}:{secret}".encode()).decode()
+            _write_credentials(token)
+            return token, "credentials.json"
+
+    # 2. env vars
+    env_key    = os.environ.get("FIVETRAN_API_KEY",    "").strip()
+    env_secret = os.environ.get("FIVETRAN_API_SECRET", "").strip()
+
+    if env_key and looks_like_b64_token(env_key):
+        if env_secret:
+            print(
+                "[asa] FIVETRAN_API_SECRET is set but ignored — "
+                "FIVETRAN_API_KEY is already a base64 token",
+                file=sys.stderr,
+            )
+        return env_key, "env FIVETRAN_API_KEY"
+
+    if env_key and env_secret:
+        token = base64.b64encode(f"{env_key}:{env_secret}".encode()).decode()
+        return token, "env FIVETRAN_API_KEY + FIVETRAN_API_SECRET"
+
+    if env_key and not env_secret:
+        print(
+            "[asa] FIVETRAN_API_KEY is set but FIVETRAN_API_SECRET is not — "
+            "incomplete credential pair ignored.\n"
+            "      Set FIVETRAN_API_KEY to the base64-encoded token from "
+            "https://fivetran.com/dashboard/user/api-config",
+            file=sys.stderr,
+        )
+        return None
+
+    return None
+
+
+def _prompt_for_token() -> Optional[str]:
+    """Interactively prompt for a base64 API token. Returns the token or None on failure."""
+    for attempt in range(3):
+        raw = getpass.getpass("Fivetran API token (base64): ").strip()
+        if not raw:
+            print("[asa] token cannot be empty", file=sys.stderr)
+            continue
+        if not looks_like_b64_token(raw):
+            print(
+                "[asa] that doesn't look like a Fivetran base64 token "
+                "(expected the base64-encoded value from "
+                "https://fivetran.com/dashboard/user/api-config)",
+                file=sys.stderr,
+            )
+            continue
+        return raw
+    print("[asa] too many invalid attempts", file=sys.stderr)
+    return None
 
 
 def _write_auth_state(account_id: Optional[str], user_id: Optional[str]) -> None:
@@ -245,19 +322,7 @@ def _write_auth_state(account_id: Optional[str], user_id: Optional[str]) -> None
     os.replace(tmp, path)
 
 
-def _get_credentials() -> Optional[Tuple[str, str]]:
-    """Return (api_key, api_secret) from env vars, module globals, or credentials file."""
-    key = os.environ.get("FIVETRAN_API_KEY", "") or API_KEY
-    secret = os.environ.get("FIVETRAN_API_SECRET", "") or API_SECRET
-    if key and secret:
-        return key, secret
-    creds = _read_credentials()
-    if creds:
-        k = creds.get("api_key", "")
-        s = creds.get("api_secret", "")
-        if k and s:
-            return k, s
-    return None
+
 
 
 def _agent_print(payload: dict, tty_message: str) -> None:
@@ -582,24 +647,25 @@ def cmd_setup(
             }, separators=(",", ":")))
             return EXIT_OK
 
-    creds = _get_credentials()
-    if not creds:
-        if sys.stdin.isatty():
-            key = getpass.getpass("Fivetran API key: ")
-            secret = getpass.getpass("Fivetran API secret: ")
-            if not key or not secret:
-                print("[asa] credentials cannot be empty", file=sys.stderr)
-                return EXIT_CREDS_MISSING
-            global API_KEY, API_SECRET
-            API_KEY, API_SECRET = key, secret
-        else:
-            print(
-                "[asa] Fivetran credentials not found.\n"
-                "Run setup in your own terminal (credentials will be prompted securely):\n"
-                "  bash .marketplace/store-performance/scripts/asa.sh setup --skill <skill-id>",
-                file=sys.stderr,
-            )
+    global _CURRENT_TOKEN
+    result = _resolve_credentials()
+    if result:
+        _CURRENT_TOKEN, source = result
+        print(f"[asa] using Fivetran credentials from {source}", file=sys.stderr)
+    elif sys.stdin.isatty():
+        _CURRENT_TOKEN = _prompt_for_token()
+        if not _CURRENT_TOKEN:
             return EXIT_CREDS_MISSING
+        source = "prompt"
+    else:
+        _script_path = os.path.abspath(__file__).replace(".py", ".sh")
+        print(
+            "[asa] Fivetran credentials not found.\n"
+            "Run setup in your own terminal (credentials will be prompted securely):\n"
+            f"  bash {_script_path} setup --skill <skill-id>",
+            file=sys.stderr,
+        )
+        return EXIT_CREDS_MISSING
 
     # Merge CLI skip flags with persisted state.
     # clear_skip → wipe; explicit skip_families → replace; neither → preserve.
@@ -622,19 +688,46 @@ def cmd_setup(
             raw_destinations = dest_fut.result()
             raw_groups       = groups_fut.result()
     except RuntimeError as exc:
-        if "HTTP 401" in str(exc):
+        if "HTTP 401" not in str(exc):
+            raise
+        if not sys.stdin.isatty():
             print(
-                "[asa] Invalid API key or secret — check your credentials at "
-                "https://fivetran.com/dashboard/user/api-config and run this script again.",
+                f"[asa] Invalid Fivetran credentials (source: {source}).\n"
+                "      Check https://fivetran.com/dashboard/user/api-config and re-run.",
                 file=sys.stderr,
             )
             return EXIT_CREDS_MISSING
-        raise
+        print(
+            f"\n[asa] Invalid Fivetran credentials.\n"
+            f"      Source: {source}\n\n"
+            f"      Options:\n"
+            f"        [1] Update {source} and re-run this script\n"
+            f"            (recommended if you want this token to work across other Fivetran tools)\n"
+            f"        [2] Paste a fresh API token now (will be saved for this skill only)\n"
+            f"        [q] Quit\n",
+            file=sys.stderr,
+        )
+        choice = input("      Choice [1/2/q]: ").strip().lower()
+        if choice != "2":
+            return EXIT_CREDS_MISSING
+        _CURRENT_TOKEN = _prompt_for_token()
+        if not _CURRENT_TOKEN:
+            return EXIT_CREDS_MISSING
+        source = "prompt"
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                dest_fut   = pool.submit(fetch_paginated, "/v1/destinations", limit=1000)
+                groups_fut = pool.submit(fetch_paginated, "/v1/groups",       limit=1000)
+                raw_destinations = dest_fut.result()
+                raw_groups       = groups_fut.result()
+        except RuntimeError as exc2:
+            if "HTTP 401" in str(exc2):
+                print("[asa] Invalid credentials on retry — giving up.", file=sys.stderr)
+                return EXIT_CREDS_MISSING
+            raise
 
     # Credentials verified — persist to file now (not before, so bad creds aren't stored)
-    resolved_creds = _get_credentials()
-    if resolved_creds:
-        _write_credentials(*resolved_creds)
+    _write_credentials(_CURRENT_TOKEN)
 
     try:
         acct = fetch_url(f"{API_BASE}/v1/account/info").get("data") or {}
@@ -977,7 +1070,7 @@ def cmd_resolve(family: str, refresh_on_miss: bool) -> int:
         print("[asa] profile invalid — re-run setup", file=sys.stderr)
         return EXIT_PROFILE_INVALID
 
-    if refresh_on_miss and _get_credentials():
+    if refresh_on_miss and _resolve_credentials():
         dest_id  = raw.get("destination", {}).get("destination_id")
         skill_id = raw.get("skill", {}).get("id", "store-performance")
         cmd_setup(
