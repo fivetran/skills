@@ -23,6 +23,7 @@ import getpass
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -163,6 +164,21 @@ def fetch_url(url: str) -> dict:
                 continue
             raise RuntimeError(f"HTTP {exc.code} for {url}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
+            # SSL cert failures usually mean the user's Python install is
+            # missing root certificates (common on python.org Python on macOS).
+            # No point retrying — give them an actionable message and stop.
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                py_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+                print(
+                    "[asa] SSL certificate verification failed — your Python install is missing root certificates.\n"
+                    "      On macOS with python.org Python, run:\n"
+                    f"        /Applications/Python\\ {py_ver}/Install\\ Certificates.command\n"
+                    "      Then re-run this command. (If you installed Python a different way, install certifi: "
+                    "python3 -m pip install --user certifi)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if attempt == 1:
                 last_exc = exc
                 time.sleep(0.75)
