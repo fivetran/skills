@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "app_id": "store-performance",
+    "name": "Store Performance",
+    "version": "1.0.0",
+    "category": "ecommerce",
+    "hero": "How is your store performing?",
+    "description": "Answer e-commerce performance questions using Fivetran-synced Shopify data. Computes GMV, net revenue, AOV, order count, repeat customer rate, refund rate, top products, BFCM and seasonality detection, new vs returning revenue, and customer cohorts — directly from raw Shopify connector tables. No dbt Quickstart required.\n",
+    "tags": [
+      "GMV",
+      "AOV",
+      "orders",
+      "refund rate",
+      "top products",
+      "repeat customers",
+      "Shopify",
+      "ecommerce"
+    ],
+    "preview_image": "assets/previews/store_performance_preview.png"
+  },
+  "deployment": {
+    "type": "skill",
+    "skill_id": "store-performance",
+    "install": {
+      "claude_code": {
+        "marketplace": "fivetran/skills",
+        "plugin": "store-performance@fivetran-skills"
+      }
+    },
+    "capabilities": [
+      { "name": "Revenue & GMV", "description": "Track gross and net revenue, AOV, and order volume over any time window" },
+      { "name": "Top Products", "description": "Rank products and SKUs by revenue, units sold, or order count" },
+      { "name": "Repeat & Cohort Analysis", "description": "Measure new vs returning revenue and customer cohort retention" },
+      { "name": "Refund & Return Rate", "description": "Quantify refund rates by period, product, or channel" },
+      { "name": "Seasonality Detection", "description": "Surface BFCM, Q4, and other seasonal revenue patterns" }
+    ],
+    "example_questions": [
+      "What was GMV last month vs the prior month?",
+      "Which 10 products drove the most revenue this quarter?",
+      "What's our repeat customer rate for cohorts from Q1?",
+      "Show refund rate by week over the past 90 days",
+      "How did Black Friday 2024 compare to Black Friday 2023?",
+      "What's the revenue split between new and returning customers?"
+    ]
+  },
+  "freshness": {
+    "max_staleness_hours": 24,
+    "minimum_history_days": 30
+  },
+  "scoping": {
+    "require_same_destination": true
+  },
+  "connector_groups": [
+    {
+      "group_id": "ecommerce",
+      "display_name": "E-commerce Platform",
+      "description": "A Shopify connector is required.",
+      "min_required": 1,
+      "options": [
+        {
+          "service": "shopify",
+          "display_name": "Shopify",
+          "required_tables": [
+            { "name": "order" },
+            { "name": "order_line" },
+            { "name": "customer" },
+            { "name": "product" },
+            { "name": "product_variant" },
+            { "name": "transaction" },
+            { "name": "refund" }
+          ]
+        }
+      ]
+    }
+  ]
+}

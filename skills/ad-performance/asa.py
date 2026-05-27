@@ -32,6 +32,27 @@ import uuid
 from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
+# readiness.json loader (inlined so the skill is self-contained when installed)
+# ---------------------------------------------------------------------------
+def _load_readiness_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as _fh:
+        return json.load(_fh)
+
+def _readiness_required_pool(cfg: dict) -> set:
+    return {opt["service"] for grp in cfg.get("connector_groups", []) for opt in grp.get("options", [])}
+
+def _readiness_skill_min_required(cfg: dict) -> dict:
+    skill_id = cfg.get("metadata", {}).get("app_id", "")
+    total = sum(grp.get("min_required", 1) for grp in cfg.get("connector_groups", []))
+    return {skill_id: total}
+
+try:
+    _CFG = _load_readiness_json(os.path.join(os.path.dirname(os.path.abspath(__file__)), "readiness.json"))
+except Exception as _e:
+    print(f"[asa] failed to load readiness.json: {_e}", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
 # Exit codes
 # ---------------------------------------------------------------------------
 EXIT_OK                       = 0
@@ -46,17 +67,12 @@ EXIT_CLI_MISSING              = 70
 EXIT_CLI_UNAUTH               = 71
 
 # ---------------------------------------------------------------------------
-# Constants (preserved from discover_fivetran.py)
+# Constants — derived from readiness.json
 # ---------------------------------------------------------------------------
 PROFILE_VERSION = "4.0"
 
-ALL_AD_FAMILIES = {
-    "google_ads", "facebook_ads", "bingads", "linkedin_ads",
-    "tiktok_ads", "pinterest_ads", "snapchat_ads", "amazon_ads",
-    "twitter_ads", "reddit_ads", "spotify_ads", "apple_search_ads",
-    "google_search_ads_360", "google_analytics_4",
-}
-
+# Package-name aliases where the dbt package name differs from the Fivetran
+# connector service name (e.g. fivetran/linkedin → linkedin_ads family).
 PACKAGE_TO_FAMILY: Dict[str, str] = {
     "linkedin": "linkedin_ads",
     "pinterest": "pinterest_ads",
@@ -66,14 +82,16 @@ PACKAGE_TO_FAMILY: Dict[str, str] = {
 
 ACTIVE_SYNC_STATES = {"scheduled", "syncing", "rescheduled"}
 
-REQUIRED_POOL    = ALL_AD_FAMILIES - {"google_analytics_4"}
-RECOMMENDED_POOL = {"google_analytics_4"}
+REQUIRED_POOL    = _readiness_required_pool(_CFG)
+RECOMMENDED_POOL: set = set()
 
-# Only min_required_count differs across skills; everything else is identical.
+# channel-performance and mmm-dashboard share this skill's connector pool
+# but require a higher min count. Their min is set directly; ad-performance's
+# comes from the config.
 SKILL_MIN_REQUIRED: Dict[str, int] = {
-    "ad-performance":    1,
+    **_readiness_skill_min_required(_CFG),
     "channel-performance": 1,
-    "mmm-dashboard":     2,
+    "mmm-dashboard":       2,
 }
 
 # ---------------------------------------------------------------------------
@@ -553,7 +571,7 @@ def _classify_transformation(package_name: str) -> Optional[str]:
         return None
     if pkg == "ad_reporting":
         return "multisource_ad_reporting"
-    family = PACKAGE_TO_FAMILY.get(pkg) or (pkg if pkg in ALL_AD_FAMILIES else None)
+    family = PACKAGE_TO_FAMILY.get(pkg) or (pkg if pkg in REQUIRED_POOL else None)
     return f"single_source_{family}" if family else None
 
 
@@ -764,7 +782,7 @@ def cmd_setup(
     # Filter to active ad-family connections
     all_connections = []
     for c in raw_connections:
-        if not isinstance(c, dict) or c.get("service") not in ALL_AD_FAMILIES:
+        if not isinstance(c, dict) or c.get("service") not in REQUIRED_POOL:
             continue
         status = c.get("status") if isinstance(c.get("status"), dict) else {}
         is_active = (

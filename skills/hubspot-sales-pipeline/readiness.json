@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "app_id": "hubspot-sales-pipeline",
+    "name": "HubSpot Sales Pipeline",
+    "version": "1.0.0",
+    "category": "sales",
+    "hero": "What does your pipeline actually look like?",
+    "description": "Answer HubSpot sales pipeline and funnel questions using Fivetran-synced HubSpot data in BigQuery, Snowflake, or Databricks. Analyzes deal stages, pipeline conversion rates, win/loss outcomes, rep performance, deal velocity, and stage aging using the HubSpot dbt package models.\n",
+    "tags": [
+      "pipeline",
+      "funnel",
+      "deal stages",
+      "win rate",
+      "deal velocity",
+      "rep performance",
+      "HubSpot",
+      "CRM"
+    ],
+    "preview_image": "assets/previews/hubspot_sales_pipeline_preview.png"
+  },
+  "deployment": {
+    "type": "skill",
+    "skill_id": "hubspot-sales-pipeline",
+    "install": {
+      "claude_code": {
+        "marketplace": "fivetran/skills",
+        "plugin": "hubspot-sales-pipeline@fivetran-skills"
+      }
+    },
+    "capabilities": [
+      { "name": "Pipeline Funnel", "description": "Stage-by-stage conversion rates and deal counts across the entire pipeline" },
+      { "name": "Deal Velocity", "description": "Average time deals spend in each stage and overall time-to-close" },
+      { "name": "Rep Performance", "description": "Deals won, lost, and in-progress broken down by sales rep" },
+      { "name": "Stage Aging", "description": "Surface stalled deals that have sat in a stage longer than expected" },
+      { "name": "Win / Loss Analysis", "description": "Breakdown of closed-won vs closed-lost with reason attribution" }
+    ],
+    "example_questions": [
+      "What's our overall pipeline win rate this quarter?",
+      "Which stage has the worst conversion rate?",
+      "Show me deals that have been in 'Proposal Sent' for more than 30 days",
+      "Who closed the most deals last month?",
+      "What's the average sales cycle length for deals over $50K?",
+      "How does our Q3 pipeline compare to Q2?"
+    ]
+  },
+  "freshness": {
+    "max_staleness_hours": 24,
+    "minimum_history_days": 90
+  },
+  "scoping": {
+    "require_same_destination": true
+  },
+  "connector_groups": [
+    {
+      "group_id": "crm",
+      "display_name": "CRM",
+      "description": "A HubSpot connector is required.",
+      "min_required": 1,
+      "options": [
+        {
+          "service": "hubspot",
+          "display_name": "HubSpot",
+          "required_tables": [
+            { "name": "deal" },
+            { "name": "deal_pipeline_stage" }
+          ],
+          "recommended_tables": [
+            { "name": "deal_contact" },
+            { "name": "deal_company" },
+            { "name": "owner" },
+            { "name": "engagement" },
+            { "name": "engagement_deal" }
+          ]
+        }
+      ]
+    }
+  ],
+  "quickstart_models": [
+    {
+      "package": "fivetran/hubspot",
+      "display_name": "HubSpot (dbt)",
+      "description": "dbt models produced by the fivetran/hubspot package. The skill's pipeline funnel, velocity, and aging analyses require at minimum hubspot__deals. Stage-level and historical analyses require the additional recommended models.\n",
+      "required": false,
+      "applies_to_services": ["hubspot"],
+      "required_models": [
+        { "name": "hubspot__deals" }
+      ],
+      "recommended_models": [
+        { "name": "hubspot__deal_stages" },
+        { "name": "hubspot__deal_history" },
+        { "name": "hubspot__engagements" },
+        { "name": "hubspot__companies" },
+        { "name": "hubspot__contacts" }
+      ]
+    }
+  ]
+}

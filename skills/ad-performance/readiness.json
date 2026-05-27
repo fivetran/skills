@@ -1,0 +1,151 @@
+{
+  "metadata": {
+    "app_id": "ad-performance",
+    "name": "Ad Performance",
+    "version": "1.0.0",
+    "category": "marketing",
+    "hero": "How are your ads actually performing?",
+    "description": "Answer ad performance questions across every platform you run — Google Ads, Facebook Ads, Microsoft Ads, LinkedIn Ads, TikTok Ads, and more. Ask about ROAS, CPC, CTR, impressions, conversions, budget pacing, campaign comparisons, and channel mix — using your Fivetran-synced data in BigQuery, Snowflake, or Databricks.\n",
+    "tags": [
+      "ad spend",
+      "ROAS",
+      "CPC",
+      "CTR",
+      "cross-channel",
+      "campaign performance",
+      "marketing analytics"
+    ],
+    "preview_image": "assets/previews/ad_performance_preview.png"
+  },
+  "deployment": {
+    "type": "skill",
+    "skill_id": "ad-performance",
+    "install": {
+      "claude_code": {
+        "marketplace": "fivetran/skills",
+        "plugin": "ad-performance@fivetran-skills"
+      }
+    },
+    "capabilities": [
+      { "name": "Cross-Channel Comparison", "description": "Compare ROAS, CPC, and CTR side-by-side across all connected ad platforms" },
+      { "name": "Campaign Drill-Down", "description": "Break performance down by campaign, ad group, or individual ad" },
+      { "name": "Trend Analysis", "description": "Spot week-over-week or month-over-month changes in spend and conversions" },
+      { "name": "Budget Pacing", "description": "Track spend vs budget and flag over- or under-pacing campaigns" },
+      { "name": "Keyword & Search Analysis", "description": "Surface top-performing and wasteful search terms (where available)" }
+    ],
+    "example_questions": [
+      "Which ad platform gave us the best ROAS last month?",
+      "Compare Google Ads vs Facebook Ads spend and conversions for Q2",
+      "Which campaigns are underpacing their budget this week?",
+      "Show me our top 10 keywords by conversion rate on Google Ads",
+      "How did TikTok Ads CTR trend over the past 90 days?",
+      "Which ad groups have a CPC above $5 but a conversion rate below 1%?"
+    ]
+  },
+  "freshness": {
+    "max_staleness_hours": 24,
+    "minimum_history_days": 30
+  },
+  "scoping": {
+    "require_same_destination": true
+  },
+  "connector_groups": [
+    {
+      "group_id": "ad_platform",
+      "display_name": "Ad Platforms",
+      "description": "At least one ad platform connector is required.",
+      "min_required": 1,
+      "options": [
+        {
+          "service": "google_ads",
+          "display_name": "Google Ads",
+          "required_tables": [{ "name": "ad_stats" }, { "name": "campaign" }],
+          "recommended_tables": [{ "name": "ad_group" }, { "name": "keyword_stats" }]
+        },
+        {
+          "service": "facebook_ads",
+          "display_name": "Facebook Ads",
+          "required_tables": [{ "name": "basic_ad" }, { "name": "campaign_history" }],
+          "recommended_tables": [{ "name": "ad_set_history" }]
+        },
+        {
+          "service": "bingads",
+          "display_name": "Microsoft Ads",
+          "required_tables": [{ "name": "ad_performance_report" }, { "name": "campaign_performance_report" }]
+        },
+        {
+          "service": "linkedin_ads",
+          "display_name": "LinkedIn Ads",
+          "required_tables": [{ "name": "ad_analytics_by_campaign" }, { "name": "campaign_history" }]
+        },
+        {
+          "service": "tiktok_ads",
+          "display_name": "TikTok Ads",
+          "required_tables": [{ "name": "ad_report_daily" }, { "name": "campaign_report_daily" }]
+        },
+        {
+          "service": "pinterest_ads",
+          "display_name": "Pinterest Ads",
+          "required_tables": [{ "name": "pin_promotion_report" }, { "name": "campaign_report" }]
+        },
+        {
+          "service": "snapchat_ads",
+          "display_name": "Snapchat Ads",
+          "required_tables": [{ "name": "ad_squad_stats" }, { "name": "campaign" }]
+        },
+        {
+          "service": "amazon_ads",
+          "display_name": "Amazon Ads",
+          "required_tables": [{ "name": "sponsored_products_report_ad" }, { "name": "portfolio" }]
+        },
+        {
+          "service": "twitter_ads",
+          "display_name": "X (Twitter) Ads",
+          "required_tables": [{ "name": "line_item_tweets" }, { "name": "campaign" }]
+        },
+        {
+          "service": "reddit_ads",
+          "display_name": "Reddit Ads",
+          "required_tables": [{ "name": "ad_account" }, { "name": "campaign" }]
+        },
+        {
+          "service": "spotify_ads",
+          "display_name": "Spotify Ads",
+          "required_tables": [{ "name": "ad_account" }]
+        },
+        {
+          "service": "apple_search_ads",
+          "display_name": "Apple Search Ads",
+          "required_tables": [{ "name": "ad_group_report" }, { "name": "campaign_report" }]
+        },
+        {
+          "service": "google_search_ads_360",
+          "display_name": "Search Ads 360",
+          "required_tables": [{ "name": "conversion_report" }, { "name": "campaign" }]
+        }
+      ]
+    }
+  ],
+  "quickstart_models": [
+    {
+      "package": "fivetran/ad_reporting",
+      "display_name": "Ad Reporting",
+      "description": "Unified cross-channel ad reporting tables produced by the fivetran/ad_reporting dbt package. When deployed, the skill uses these instead of querying each connector's raw schema separately.\n",
+      "required": false,
+      "applies_to_groups": ["ad_platform"],
+      "required_models": [
+        { "name": "ad_reporting__account_report" },
+        { "name": "ad_reporting__campaign_report" },
+        { "name": "ad_reporting__ad_group_report" },
+        { "name": "ad_reporting__ad_report" }
+      ],
+      "recommended_models": [
+        { "name": "ad_reporting__keyword_report" },
+        { "name": "ad_reporting__search_report" },
+        { "name": "ad_reporting__url_report" },
+        { "name": "ad_reporting__monthly_campaign_country_report" },
+        { "name": "ad_reporting__monthly_campaign_region_report" }
+      ]
+    }
+  ]
+}
