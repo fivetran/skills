@@ -7,11 +7,18 @@ The official repository of Fivetran skills and plugins for AI Agents, as a [Clau
 ## Installation
 
 ### Claude Code CLI
+Register the marketplace:
 
 ```
 /plugin marketplace add fivetran/skills
-/plugin install base@fivetran-skills       # default skills only
-/plugin install <plugin>@fivetran-skills   # one named plugin (see Plugins below)
+```
+Install a specific plugin from the marketplace (see [Plugins](#plugins) below):
+```
+/plugin install <plugin>@fivetran-skills   # replace <plugin> with a named from the list plugin 
+```
+Reload your plugins to load the installed skill in your current session:
+```
+/reload-plugins
 ```
 
 ### Claude Desktop App
@@ -19,6 +26,8 @@ The official repository of Fivetran skills and plugins for AI Agents, as a [Clau
 1. Click **Customize** in the left nav and click the **+** next to Personal Plugins
 2. Click **+ Create Plugin** → **Add Marketplace**
 3. Enter `fivetran/skills`
+4. Navigate to **+ Browser Plugins** → **Personal** → **skills**
+5. Add the specific skill you need by clicking the **+** next to the skill
 
 ### Vercel Skills CLI
 
