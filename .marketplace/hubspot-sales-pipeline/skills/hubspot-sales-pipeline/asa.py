@@ -126,6 +126,67 @@ def looks_like_b64_token(s: str) -> bool:
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
+# NOTE: _SSL_CTX, _build_ssl_context, and _ssl_context are duplicated verbatim
+# in skills/ad-performance/asa.py and skills/store-performance/asa.py.
+# Any change here must be applied to all three files.
+_SSL_CTX: Optional[ssl.SSLContext] = None
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    # ssl.create_default_context() already honors SSL_CERT_FILE and SSL_CERT_DIR
+    # via OpenSSL's standard env-var handling — those do not need to appear in
+    # the explicit loop below.
+    ctx = ssl.create_default_context()
+
+    def _empty() -> bool:
+        try:
+            return ctx.cert_store_stats().get("x509_ca", 0) == 0
+        except Exception:
+            return False
+
+    # REQUESTS_CA_BUNDLE is intentionally included here because stdlib ignores it
+    # (only requests/httpx read it); we bridge the gap explicitly.
+    for var in ("CUSTOM_CA_BUNDLE", "REQUESTS_CA_BUNDLE"):
+        path = os.environ.get(var)
+        if path and os.path.isfile(path):
+            try:
+                ctx.load_verify_locations(cafile=path)
+            except Exception:
+                pass
+
+    if _empty():
+        try:
+            import certifi
+            ctx.load_verify_locations(certifi.where())
+        except Exception:
+            pass
+
+    if _empty() and sys.platform == "darwin":
+        keychains = [
+            "/System/Library/Keychains/SystemRootCertificates.keychain",
+            "/Library/Keychains/System.keychain",
+        ]
+        for kc in keychains:
+            try:
+                pem = subprocess.run(
+                    ["/usr/bin/security", "find-certificate", "-a", "-p", kc],
+                    capture_output=True, text=True, timeout=15,
+                ).stdout
+                if pem and pem.strip():
+                    ctx.load_verify_locations(cadata=pem)
+            except Exception:
+                pass
+
+    return ctx
+
+
+def _ssl_context() -> ssl.SSLContext:
+    global _SSL_CTX
+    if _SSL_CTX is None:
+        _SSL_CTX = _build_ssl_context()
+    return _SSL_CTX
+
+
 def _auth_header() -> str:
     return "Basic " + (_CURRENT_TOKEN or base64.b64encode(b":").decode())
 
@@ -141,7 +202,7 @@ def fetch_url(url: str) -> dict:
         req = urllib.request.Request(url)
         req.add_header("Authorization", _auth_header())
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             if 500 <= exc.code < 600 and attempt == 1:
