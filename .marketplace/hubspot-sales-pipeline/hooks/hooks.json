@@ -1,7 +1,15 @@
 {
   "hooks": {
-    "SessionStart": [{
-      "hooks": [{ "type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/log-session-start.sh" }]
+    "UserPromptSubmit": [{
+      "hooks": [{ "type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/log-skill-use.sh" }]
+    }],
+    "PostToolUse": [{
+      "matcher": "Skill",
+      "hooks": [{ "type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/log-skill-use.sh" }]
+    }],
+    "PostToolUseFailure": [{
+      "matcher": "Skill",
+      "hooks": [{ "type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/log-skill-use.sh" }]
     }]
   }
 }
