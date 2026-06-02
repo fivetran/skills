@@ -353,7 +353,7 @@ per-campaign CTRs overstates the true CTR).
 ### Step 1: Readiness Check (first invocation only)
 Run the readiness queries above. Report which platforms are available and the latest data date for each.
 
-Then close with 2-3 useful starter questions tailored to the available platforms and active models. Present them under a "What would you like to analyze?" heading, and follow with a single line offering visualization: *"Would you like results visualized as an interactive dashboard?"* Do not omit these starter questions or the visualization line.
+Then close with 2-3 useful starter questions tailored to the available platforms and active models. Present them under a "What would you like to analyze?" heading. Do not omit these starter questions.
 
 ### Step 2: Understand the Question
 Parse the user's question. Identify:
@@ -386,7 +386,7 @@ Use the appropriate dataset for the `model_tier`. Run multiple queries for depth
 
 ## Visualization Prompt
 
-**You MUST end every response that contains query results with one of these prompts. Skip it on the first invocation (we will combine it with the proposed question).**
+**You MUST end every response that contains query results with one of these prompts.**
 
 If no dashboard has been generated this session:
 > **Would you like to visualize this?**

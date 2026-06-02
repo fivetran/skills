@@ -231,7 +231,7 @@ PYEOF
 
 Inline the actual data values when you run it. Apply this same formatter for the freshness table and for any Claude-composed result tables outside of raw `bq query` output.
 
-Close with 2–3 useful starter questions, then: *"Would you like results visualized as an interactive dashboard?"*
+Close with 2–3 useful starter questions.
 
 ## Prerequisites
 
@@ -357,7 +357,7 @@ Compute all derived metrics in SQL. Use `SAFE_DIVIDE` to prevent division by zer
 
 ### Step 1: Readiness Check (first invocation only)
 Run readiness and report available tables and latest data dates.
-Close with 2–3 starter questions tailored to available models and a visualization offer.
+Close with 2–3 starter questions tailored to available models.
 
 ### Step 2: Understand the Question
 Parse the user's question. Identify:
@@ -383,7 +383,7 @@ Then suggest **2–3 follow-up questions** that go deeper.
 
 ## Visualization Prompt
 
-**End every response that contains query results with one of these.** Skip on first invocation (combine with starter questions).
+**End every response that contains query results with one of these.**
 
 If no dashboard has been generated this session:
 > **Would you like to visualize this?**
