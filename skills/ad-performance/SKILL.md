@@ -280,9 +280,41 @@ These have platform-specific columns not in the unified model (e.g., `advertisin
 - `url_report`: + `ad_group_id`, `ad_group_name`, `base_url`, `url_host`, `url_path`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`
 - `monthly_campaign_country_report`: uses `date_month` instead of `date_day`, + `country`, `country_code`, `global_region`
 
+## Per-Connector Drill-Down
+
+The unified `ad_reporting__*` tables cover cross-channel spend/clicks/impressions/
+conversions and the common campaign/ad-group/ad/keyword/URL grains. When a question
+needs a **platform-specific dimension the unified layer doesn't carry** — Facebook
+leads/creatives/UTMs by action type, Microsoft per-goal conversions / share of voice
+/ city geo, Google audience segments or conversion-action lineage — **read the
+matching connector reference before writing raw queries:**
+
+- Google Ads → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/connectors/google_ads.md`
+- Facebook Ads → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/connectors/facebook_ads.md`
+- Microsoft Ads (`bingads`) → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/connectors/microsoft_ads.md`
+
+Each file documents that connector's raw table inventory, join paths and type-cast
+gotchas, conversion/action semantics, and verified query patterns — written against
+`{PROJECT_ID}.{RAW_DATASET}`, which you fill from `resolve <family>` (`database` →
+`{PROJECT_ID}`, `raw_schema` → `{RAW_DATASET}`).
+
+Rules:
+- **Read the connector file first; do not guess raw table names.**
+- Raw table presence is **report-dependent and varies per customer** — confirm the
+  tables the file lists actually exist via `INFORMATION_SCHEMA.TABLES` before querying.
+- If the needed report isn't synced for this account, say so honestly rather than
+  substituting a different table.
+- Only Google Ads, Facebook Ads, and Microsoft Ads have connector references today.
+  For the other supported platforms (LinkedIn, TikTok, Pinterest, Snapchat), answer
+  from the unified layer; if a question needs a raw dimension there's no reference
+  for, introspect with INFORMATION_SCHEMA rather than guessing raw table names.
+
 ## Metric Definitions
 
 Compute all derived metrics in SQL. Always use NULLIF to prevent division by zero.
+Compute rate metrics by aggregating numerator and denominator separately
+(`SUM(clicks) / SUM(impressions)`) — **never average per-row rates** (averaging
+per-campaign CTRs overstates the true CTR).
 
 | Metric | Formula | SQL |
 |---|---|---|
@@ -543,8 +575,16 @@ ORDER BY c.spend DESC
 
 ## Discovery Mode
 
-If the user asks about data not in the tables above:
-1. List datasets: `bq ls --project_id={PROJECT_ID}`
-2. List tables: `bq ls {PROJECT_ID}:<dataset>`
-3. Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:<dataset>.<table>`
-4. Sample rows: `bq head -n 5 {PROJECT_ID}:<dataset>.<table>`
+If the user asks about data not in the unified tables above:
+
+1. **First check the per-connector reference** for that platform (see
+   "Per-Connector Drill-Down") — the table you need is usually documented there.
+2. If you still need to explore, stay **within the dataset that `resolve` returned**
+   for the relevant family (`{UNIFIED_DATASET}`, `{SINGLE_SOURCE_DATASET}`, or
+   `{RAW_DATASET}`). Do **not** `bq ls` the whole project hunting for other datasets,
+   and never fall back to `_demo` / `_dev` / `_test` variants — if a documented
+   dataset returns nothing, report that honestly rather than substituting another.
+   - List tables in the resolved dataset: `bq ls {PROJECT_ID}:<resolved_dataset>`
+   - Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:<resolved_dataset>.<table>`
+   - Or via SQL: `SELECT table_name FROM \`{PROJECT_ID}.<resolved_dataset>.INFORMATION_SCHEMA.TABLES\``
+   - Sample rows: `bq head -n 5 {PROJECT_ID}:<resolved_dataset>.<table>`
