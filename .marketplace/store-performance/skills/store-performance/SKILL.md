@@ -205,6 +205,7 @@ order in the data is `<date>`. Results don't reflect the last `<n>` days."
 - Warehouse with the Fivetran-Shopify schema synced (BigQuery, Snowflake, or Databricks)
 - The matching warehouse CLI installed and authenticated (`bq` / `snow` / `databricks`) — `asa.sh setup` checks this and prints install/auth recipes if missing
 - Read access on the resolved `{DATABASE}.{SCHEMA}`
+- **Databricks only:** set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
 
 ## Metric Definitions
 

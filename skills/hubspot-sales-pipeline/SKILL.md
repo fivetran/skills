@@ -240,6 +240,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/hubspot-sales-pipeline/asa.sh check-cli <bq|sn
 ```
 Prints exact install and auth commands if anything is missing.
 
+**Databricks only:** also set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
+
 ## Data Location
 
 **BigQuery project:** `{PROJECT_ID}`

@@ -219,6 +219,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh check-cli <bq|snowflake_
 ```
 It will print the exact install and auth commands needed if anything is missing.
 
+**Databricks only:** also set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
+
 ## Data Location
 
 **BigQuery project:** `{PROJECT_ID}`

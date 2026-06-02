@@ -469,9 +469,27 @@ def _snow_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Op
 
 
 def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List]:
+    # Modern Databricks CLI (v1.x) has no `databricks sql execute` subcommand;
+    # the SQL Statement Execution REST API is the supported path. Route through
+    # `databricks api post` so we keep using the CLI's existing auth profile.
+    warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "").strip()
+    if not warehouse_id:
+        msg = ("DATABRICKS_WAREHOUSE_ID not set. Set it to the id of a SQL "
+               "warehouse in your Databricks workspace (visible under SQL "
+               "Warehouses) and re-run.")
+        print(f"[asa] {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
+        return None
+
+    body = json.dumps({
+        "warehouse_id": warehouse_id,
+        "statement":    sql,
+        "wait_timeout": f"{min(max(timeout, 5), 50)}s",
+    })
     r = subprocess.run(
-        ["databricks", "sql", "execute", "--sql", sql],
-        capture_output=True, text=True, timeout=timeout,
+        ["databricks", "api", "post", "/api/2.0/sql/statements/", "--json", body],
+        capture_output=True, text=True, timeout=timeout + 10,
     )
     if r.returncode != 0:
         msg = r.stderr.strip()
@@ -480,10 +498,18 @@ def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False)
             raise RuntimeError(msg)
         return None
     try:
-        data = json.loads(r.stdout)
-        return data.get("result", {}).get("data_array") or []
+        payload = json.loads(r.stdout)
     except Exception:
         return None
+    state = (payload.get("status") or {}).get("state")
+    if state != "SUCCEEDED":
+        err = (payload.get("status") or {}).get("error", {}).get("message", "")
+        msg = f"databricks statement state={state} {err}".strip()
+        print(f"[asa] warn: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
+        return None
+    return (payload.get("result") or {}).get("data_array") or []
 
 
 # ---------------------------------------------------------------------------
