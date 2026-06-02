@@ -1,6 +1,6 @@
 {
   "name": "hubspot-sales-pipeline",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "HubSpot sales pipeline funnel and rep performance analysis",
   "author": {
     "name": "Fivetran"

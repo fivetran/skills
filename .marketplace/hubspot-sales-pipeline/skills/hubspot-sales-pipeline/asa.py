@@ -27,6 +27,7 @@ import ssl
 import subprocess
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -412,6 +413,17 @@ def _write_auth_state(account_id: Optional[str], user_id: Optional[str]) -> None
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
+
+def _write_error_log(tb: str) -> Optional[str]:
+    try:
+        path = os.path.join(_config_dir(), "asa-error.log")
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(tb)
+        os.chmod(path, 0o600)
+        return path
+    except Exception:
+        return None
 
 
 def _agent_print(payload: dict, tty_message: str) -> None:
@@ -1427,5 +1439,29 @@ def main() -> int:
     return 1
 
 
+def _entrypoint() -> int:
+    try:
+        return main()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[asa] cancelled.", file=sys.stderr)
+        return 130
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(_entrypoint())
+    except SystemExit:
+        raise
+    except Exception as exc:
+        tb = traceback.format_exc()
+        log_path = _write_error_log(tb)
+        print(f"[asa] unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        if log_path:
+            print(
+                f"[asa] full traceback written to {log_path}\n"
+                f"      (set ASA_DEBUG=1 to print it here)",
+                file=sys.stderr,
+            )
+        if os.environ.get("ASA_DEBUG"):
+            print(tb, file=sys.stderr)
+        sys.exit(1)
