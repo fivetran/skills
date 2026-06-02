@@ -74,7 +74,7 @@ subsequent runs reuse it.
    - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe and STOP. Offer the `!` shortcut: *"Or type `! gcloud auth application-default login` directly in this chat prompt."*
    - `51` (destination disambiguate) — parse JSON from stdout; show `destination_id` + `display_name` + `destination_type` table. Suggest the first as default. Once confirmed, run setup with `--destination-id <chosen_id>`.
    - `52` (connection disambiguate) — parse JSON; show numbered table of `connection_id`, `schema`, `sync_state` for the hubspot family. Once user picks, run setup with `--connection hubspot=<chosen_id>`.
-   - `53` (insufficient connectors) — no active HubSpot connector found. Tell the user: "No active HubSpot connector was found on this destination. Connect one at https://fivetran.com." Stop.
+   - `53` (insufficient connectors) — no active HubSpot connection found. Tell the user: "No active HubSpot connection was found on this destination. Connect one at https://fivetran.com." Stop.
    - `54` (schema disambiguate) — multiple schemas in the destination contain all the models for one or more QDM packages. Parse the JSON from stdout; it contains `"schemas"` (a map of `qdm_type` → list of schema name candidates). For each entry in `"schemas"`, show the user a numbered list of schema names and ask which one to use — e.g. *"I found two schemas that both contain your HubSpot models. Which should I use?"* Once the user picks, **run setup yourself** with `--schema` for each chosen schema:
      ```bash
      bash ${CLAUDE_PLUGIN_ROOT}/skills/hubspot-sales-pipeline/asa.sh setup --skill hubspot-sales-pipeline \

@@ -71,7 +71,7 @@ This skill uses a local profile at `~/.fivetran/skills/store-performance/profile
    - `70` (CLI missing) / `71` (CLI unauthenticated) — surface the printed install/auth recipe verbatim and STOP. Offer the `!` shortcut: *"Or type `! gcloud auth application-default login` (or `snow connection test` / `databricks auth login`) directly in this chat to run it here."*
    - `51` (destination disambiguate) — multiple destinations. Parse the JSON; show the user a numbered table of `destination_id` + `display_name` + `destination_type`, suggest the first as default, then re-run setup with `--destination-id <chosen_id>`.
    - `52` (connection disambiguate) — multiple active shopify connections on the destination. Parse the JSON's `families` map, show choices for each, then re-run setup with `--connection shopify=<chosen_id>` (or `--skip-family shopify` to skip).
-   - `53` (insufficient connectors) — no active shopify connectors on the chosen destination. Tell the user: "No supported e-commerce connectors are active on this destination. Connect Shopify (or another supported e-commerce service) and try again."
+   - `53` (insufficient connectors) — no active shopify connections on the chosen destination. Tell the user: "No supported e-commerce connections are active on this destination. Connect Shopify (or another supported e-commerce service) and try again."
    - any other non-zero — relay stderr and stop.
 
 3. **Resolve connector context.** For shopify (and later: woocommerce, bigcommerce, recharge), call:

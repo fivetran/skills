@@ -81,7 +81,7 @@ This skill uses a local profile at `~/.fivetran/skills/ad-performance/profile.js
        --skip-family pinterest_ads 2>&1; echo "EXIT:$?"
      ```
      Families with a single active connection auto-resolve without any flag.
-   - `53` (insufficient connectors) — no active ad connectors were found on the chosen destination. Parse the JSON from stdout: it lists `required_pool`, `found`, and `min_required_count`. Tell the user: "No supported ad platform connectors are active on this destination. Connect at least one of: {required_pool}." Stop.
+   - `53` (insufficient connectors) — no active ad connections were found on the chosen destination. Parse the JSON from stdout: it lists `required_pool`, `found`, and `min_required_count`. Tell the user: "No supported ad platform connections are active on this destination. Connect at least one of: {required_pool}." Stop.
    - `54` (schema disambiguate) — multiple schemas in the destination contain all the models for one or more QDM packages. Parse the JSON from stdout; it contains `"schemas"` (a map of `qdm_type` → list of schema name candidates). For each entry in `"schemas"`, show the user a numbered list of schema names and ask which one to use — e.g. *"I found two schemas that both contain your ad reporting models. Which should I use?"* Once the user picks, **run setup yourself** with `--schema` for each chosen schema:
      ```bash
      bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance/asa.sh setup --skill ad-performance \
