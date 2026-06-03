@@ -23,6 +23,11 @@
       "description": "HubSpot sales pipeline funnel and rep performance analysis"
     },
     {
+      "name": "marketing-automation",
+      "source": "./.marketplace/marketing-automation",
+      "description": "Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools)"
+    },
+    {
       "name": "store-performance",
       "source": "./.marketplace/store-performance",
       "description": "E-commerce store performance analysis from raw Shopify connector data"
