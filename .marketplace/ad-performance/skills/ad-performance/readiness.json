@@ -59,7 +59,7 @@
         {
           "service": "google_ads",
           "display_name": "Google Ads",
-          "required_tables": [{ "name": "ad_stats" }, { "name": "campaign" }],
+          "required_tables": [{ "name": "ad_stats" }, { "name": "campaign_history" }],
           "recommended_tables": [{ "name": "ad_group" }, { "name": "keyword_stats" }]
         },
         {
