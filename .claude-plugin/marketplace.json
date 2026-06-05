@@ -31,6 +31,11 @@
       "name": "store-performance",
       "source": "./.marketplace/store-performance",
       "description": "E-commerce store performance analysis from raw Shopify connector data"
+    },
+    {
+      "name": "zendesk",
+      "source": "./.marketplace/zendesk",
+      "description": "First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk"
     }
   ]
 }
