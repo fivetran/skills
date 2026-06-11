@@ -842,7 +842,8 @@ Suggested viz: Dual-line chart — `day` on x-axis; `leads_created` and `leads_t
 ## Discovery Mode
 
 If the user asks about data not in the tables above:
-1. List datasets: `bq ls --project_id={PROJECT_ID}`
-2. List tables: `bq ls {PROJECT_ID}:{SCHEMA}`
-3. Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:{SCHEMA}.<table>`
-4. Sample rows: `bq head -n 5 {PROJECT_ID}:{SCHEMA}.<table>`
+1. **Find a specific table (preferred)** — pagination-immune and returns only the matches, so it stays cheap even on large connector schemas: `SELECT table_name FROM \`{PROJECT_ID}.{SCHEMA}.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
+2. Browse all tables: `bq ls --max_results=10000 {PROJECT_ID}:{SCHEMA}` (plain `bq ls` defaults to 50 rows and will silently truncate a larger schema — always pass `--max_results`, or prefer the filtered SQL above)
+3. List datasets: `bq ls --max_results=10000 --project_id={PROJECT_ID}`
+4. Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:{SCHEMA}.<table>`
+5. Sample rows: `bq head -n 5 {PROJECT_ID}:{SCHEMA}.<table>`

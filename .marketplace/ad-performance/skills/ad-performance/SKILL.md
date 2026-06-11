@@ -584,7 +584,11 @@ If the user asks about data not in the unified tables above:
    `{RAW_DATASET}`). Do **not** `bq ls` the whole project hunting for other datasets,
    and never fall back to `_demo` / `_dev` / `_test` variants — if a documented
    dataset returns nothing, report that honestly rather than substituting another.
-   - List tables in the resolved dataset: `bq ls {PROJECT_ID}:<resolved_dataset>`
+   - **Find a specific table (preferred)** — pagination-immune and returns only the
+     matches, so it stays cheap even on large connector schemas:
+     `SELECT table_name FROM \`{PROJECT_ID}.<resolved_dataset>.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
+   - Browse all tables: `bq ls --max_results=10000 {PROJECT_ID}:<resolved_dataset>`
+     (plain `bq ls` defaults to 50 rows and will silently truncate a larger schema —
+     always pass `--max_results`, or prefer the filtered SQL above)
    - Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:<resolved_dataset>.<table>`
-   - Or via SQL: `SELECT table_name FROM \`{PROJECT_ID}.<resolved_dataset>.INFORMATION_SCHEMA.TABLES\``
    - Sample rows: `bq head -n 5 {PROJECT_ID}:<resolved_dataset>.<table>`

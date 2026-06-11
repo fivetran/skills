@@ -472,15 +472,20 @@ ORDER BY customer_type;
 If the user asks about data not covered by the 7 v1 tables (e.g. discounts,
 inventory, fulfillment):
 
-1. List all tables in the schema (warehouse-specific):
+1. Find a specific table (preferred — pagination-immune, returns only the matches;
+   `INFORMATION_SCHEMA` works on all three warehouses):
+   - BigQuery: `SELECT table_name FROM \`{DATABASE}.{SCHEMA}.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
+   - Snowflake: `SELECT table_name FROM {DATABASE}.INFORMATION_SCHEMA.TABLES WHERE table_schema = '{SCHEMA}' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+   - Databricks: `SELECT table_name FROM {DATABASE}.information_schema.tables WHERE table_schema = '{SCHEMA}' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+2. Browse all tables in the schema (warehouse-specific):
    - Snowflake: `SHOW TABLES IN SCHEMA {DATABASE}.{SCHEMA};`
-   - BigQuery: `bq ls {DATABASE}:{SCHEMA}`
+   - BigQuery: `bq ls --max_results=10000 {DATABASE}:{SCHEMA}` (plain `bq ls` defaults to 50 rows and will silently truncate a larger schema — always pass `--max_results`, or prefer the filtered SQL above)
    - Databricks: `SHOW TABLES IN {DATABASE}.{SCHEMA};`
-2. Inspect a table's columns:
+3. Inspect a table's columns:
    - Snowflake: `DESC TABLE {DATABASE}.{SCHEMA}.<table>;`
    - BigQuery: `bq show --schema --format=prettyjson {DATABASE}:{SCHEMA}.<table>`
    - Databricks: `DESCRIBE TABLE {DATABASE}.{SCHEMA}.<table>;`
-3. Sample rows: `SELECT * FROM {DATABASE}.{SCHEMA}.<table> LIMIT 5;` (works on all three).
+4. Sample rows: `SELECT * FROM {DATABASE}.{SCHEMA}.<table> LIMIT 5;` (works on all three).
 
 If the table doesn't exist, tell the user: "That table isn't in the
 Shopify destination this skill resolved to. Either it's outside the v1
