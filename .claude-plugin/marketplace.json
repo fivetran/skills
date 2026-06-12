@@ -13,29 +13,29 @@
       "description": "Fivetran MCP and general skills"
     },
     {
-      "name": "ad-performance",
-      "source": "./.marketplace/ad-performance",
+      "name": "ad-performance-analysis",
+      "source": "./.marketplace/ad-performance-analysis",
       "description": "Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks"
     },
     {
-      "name": "hubspot-sales-pipeline",
-      "source": "./.marketplace/hubspot-sales-pipeline",
-      "description": "HubSpot sales pipeline funnel and rep performance analysis"
+      "name": "customer-support-analysis",
+      "source": "./.marketplace/customer-support-analysis",
+      "description": "First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk"
     },
     {
-      "name": "marketing-automation",
-      "source": "./.marketplace/marketing-automation",
+      "name": "marketing-automation-analysis",
+      "source": "./.marketplace/marketing-automation-analysis",
       "description": "Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools)"
     },
     {
-      "name": "store-performance",
-      "source": "./.marketplace/store-performance",
-      "description": "E-commerce store performance analysis from raw Shopify connector data"
+      "name": "sales-pipeline-analysis",
+      "source": "./.marketplace/sales-pipeline-analysis",
+      "description": "HubSpot sales pipeline funnel and rep performance analysis"
     },
     {
-      "name": "zendesk",
-      "source": "./.marketplace/zendesk",
-      "description": "First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk"
+      "name": "store-performance-analysis",
+      "source": "./.marketplace/store-performance-analysis",
+      "description": "E-commerce store performance analysis from raw Shopify connector data"
     }
   ]
 }

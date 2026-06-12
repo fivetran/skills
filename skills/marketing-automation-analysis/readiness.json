@@ -1,0 +1,106 @@
+{
+  "metadata": {
+    "app_id": "marketing-automation-analysis",
+    "name": "Marketing Automation",
+    "version": "1.0.0",
+    "category": "marketing",
+    "hero": "How is your marketing automation actually performing?",
+    "description": "Answer marketing automation questions using Fivetran-synced data in BigQuery, Snowflake, or Databricks. Analyzes funnel velocity, lead lifecycle, nurture stream performance, email engagement, campaign performance, and lead source attribution. Today supports Marketo via the fivetran/marketo dbt package; designed to add HubSpot Marketing, Pardot, Iterable, Braze, and other marketing automation tools as separate connector options.\n",
+    "tags": [
+      "marketing automation",
+      "funnel velocity",
+      "lead lifecycle",
+      "nurture",
+      "email engagement",
+      "MQL",
+      "SQL",
+      "Marketo"
+    ],
+    "preview_image": "assets/previews/marketing_automation_preview.png"
+  },
+  "deployment": {
+    "type": "skill",
+    "skill_id": "marketing-automation-analysis",
+    "install": {
+      "claude_code": {
+        "marketplace": "fivetran/skills",
+        "plugin": "marketing-automation-analysis@fivetran-skills"
+      }
+    },
+    "capabilities": [
+      { "name": "Funnel Velocity",         "description": "Days between lead lifecycle stages (creation -> MQL -> SAL -> SQL -> opportunity) by cohort, source, or rep" },
+      { "name": "Lead Lifecycle",          "description": "Conversion rates at each stage of the lead funnel, with cohort and source breakdowns" },
+      { "name": "Nurture Performance",     "description": "Per-program performance for nurture streams: enter rate, exit rate, days in nurture, downstream conversion" },
+      { "name": "Email Engagement",        "description": "Send / delivery / open / click / unsubscribe / bounce rates by campaign, program, template, and time" },
+      { "name": "Best & Worst Emails",     "description": "Top and bottom email templates by open rate, click rate, unsubscribe rate" },
+      { "name": "Campaign Performance",    "description": "Engagement and conversion rolled up to campaign level, including SFDC campaign linkage" },
+      { "name": "Lead Source Attribution", "description": "Volume and quality of leads by acquisition source; conversion rate and time-to-convert per source" },
+      { "name": "Engagement Scoring",      "description": "Behavior and demographic score trends; identify highly engaged and disengaged leads" }
+    ],
+    "example_questions": [
+      "What's the average time from MQL to SQL this quarter?",
+      "Which nurture program is converting leads fastest?",
+      "Show me the top 10 email templates by click rate over the last 90 days",
+      "Which lead sources produce the highest conversion to opportunity?",
+      "Where are leads dropping off in the funnel?",
+      "Which programs have the highest unsubscribe rate?",
+      "How many leads entered each nurture stream last month, and how many exited?",
+      "Compare email open rates between batch and trigger campaigns this quarter"
+    ]
+  },
+  "freshness": {
+    "max_staleness_hours": 24,
+    "minimum_history_days": 90
+  },
+  "scoping": {
+    "require_same_destination": true
+  },
+  "connector_groups": [
+    {
+      "group_id": "marketing_automation",
+      "display_name": "Marketing Automation Platform",
+      "description": "A marketing automation connector is required. Today: Marketo. Future: HubSpot Marketing, Pardot, Iterable, Braze, etc.",
+      "min_required": 1,
+      "options": [
+        {
+          "service": "marketo",
+          "display_name": "Marketo",
+          "required_tables": [
+            { "name": "lead" },
+            { "name": "activity_send_email" }
+          ],
+          "recommended_tables": [
+            { "name": "activity_email_delivered" },
+            { "name": "activity_open_email" },
+            { "name": "activity_click_email" },
+            { "name": "activity_unsubscribe_email" },
+            { "name": "activity_email_bounced" },
+            { "name": "campaign" },
+            { "name": "program" },
+            { "name": "email_template_history" },
+            { "name": "lead_describe" }
+          ]
+        }
+      ]
+    }
+  ],
+  "quickstart_models": [
+    {
+      "package": "fivetran/marketo",
+      "display_name": "Marketo (dbt)",
+      "description": "dbt models produced by the fivetran/marketo package. The skill's funnel velocity, nurture analysis, and email engagement work require at minimum marketo__leads and marketo__email_sends. Funnel velocity over time additionally requires marketo__lead_history (daily lead snapshots).\n",
+      "required": false,
+      "applies_to_services": ["marketo"],
+      "required_models": [
+        { "name": "marketo__leads" },
+        { "name": "marketo__email_sends" }
+      ],
+      "recommended_models": [
+        { "name": "marketo__lead_history" },
+        { "name": "marketo__campaigns" },
+        { "name": "marketo__programs" },
+        { "name": "marketo__email_templates" }
+      ]
+    }
+  ]
+}

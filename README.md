@@ -45,11 +45,11 @@ See [Vercel's Skills docs](https://github.com/vercel-labs/skills) for flags like
 | Plugin | Description |
 |--------|-------------|
 | [base](.marketplace/base) | Fivetran MCP and general skills |
-| [ad-performance](.marketplace/ad-performance) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
-| [hubspot-sales-pipeline](.marketplace/hubspot-sales-pipeline) | HubSpot sales pipeline funnel and rep performance analysis |
-| [marketing-automation](.marketplace/marketing-automation) | Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools) |
-| [store-performance](.marketplace/store-performance) | E-commerce store performance analysis from raw Shopify connector data |
-| [zendesk](.marketplace/zendesk) | First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk |
+| [ad-performance-analysis](.marketplace/ad-performance-analysis) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
+| [customer-support-analysis](.marketplace/customer-support-analysis) | First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk |
+| [marketing-automation-analysis](.marketplace/marketing-automation-analysis) | Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools) |
+| [sales-pipeline-analysis](.marketplace/sales-pipeline-analysis) | HubSpot sales pipeline funnel and rep performance analysis |
+| [store-performance-analysis](.marketplace/store-performance-analysis) | E-commerce store performance analysis from raw Shopify connector data |
 <!-- PLUGINS-TABLE-END -->
 
 <!-- SKILLS-BY-PLUGIN-START -->
@@ -60,35 +60,35 @@ See [Vercel's Skills docs](https://github.com/vercel-labs/skills) for flags like
 | [fivetran-account-info](.marketplace/base/skills/fivetran-account-info) | Get a quick overview of the connected Fivetran account |
 | [lakehouse-explorer](.marketplace/base/skills/lakehouse-explorer) | Query Fivetran-managed Iceberg tables via DuckDB and Polaris, cost-efficiently |
 
-### `ad-performance` skills
+### `ad-performance-analysis` skills
 
 | Skill | Description |
 |-------|-------------|
-| [ad-performance](.marketplace/ad-performance/skills/ad-performance) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
+| [ad-performance-analysis](.marketplace/ad-performance-analysis/skills/ad-performance-analysis) | Cross-channel ad performance analysis via BigQuery, Snowflake, or Databricks |
 
-### `hubspot-sales-pipeline` skills
-
-| Skill | Description |
-|-------|-------------|
-| [hubspot-sales-pipeline](.marketplace/hubspot-sales-pipeline/skills/hubspot-sales-pipeline) | HubSpot sales pipeline funnel and rep performance analysis |
-
-### `marketing-automation` skills
+### `customer-support-analysis` skills
 
 | Skill | Description |
 |-------|-------------|
-| [marketing-automation](.marketplace/marketing-automation/skills/marketing-automation) | Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools) |
+| [customer-support-analysis](.marketplace/customer-support-analysis/skills/customer-support-analysis) | First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk |
 
-### `store-performance` skills
-
-| Skill | Description |
-|-------|-------------|
-| [store-performance](.marketplace/store-performance/skills/store-performance) | E-commerce store performance analysis from raw Shopify connector data |
-
-### `zendesk` skills
+### `marketing-automation-analysis` skills
 
 | Skill | Description |
 |-------|-------------|
-| [zendesk](.marketplace/zendesk/skills/zendesk) | First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk |
+| [marketing-automation-analysis](.marketplace/marketing-automation-analysis/skills/marketing-automation-analysis) | Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools) |
+
+### `sales-pipeline-analysis` skills
+
+| Skill | Description |
+|-------|-------------|
+| [sales-pipeline-analysis](.marketplace/sales-pipeline-analysis/skills/sales-pipeline-analysis) | HubSpot sales pipeline funnel and rep performance analysis |
+
+### `store-performance-analysis` skills
+
+| Skill | Description |
+|-------|-------------|
+| [store-performance-analysis](.marketplace/store-performance-analysis/skills/store-performance-analysis) | E-commerce store performance analysis from raw Shopify connector data |
 <!-- SKILLS-BY-PLUGIN-END -->
 
 ## MCP

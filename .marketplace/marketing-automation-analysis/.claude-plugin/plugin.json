@@ -1,0 +1,8 @@
+{
+  "name": "marketing-automation-analysis",
+  "version": "1.0.0",
+  "description": "Funnel velocity, nurture, and email engagement analysis for Marketo (and other marketing automation tools)",
+  "author": {
+    "name": "Fivetran"
+  }
+}

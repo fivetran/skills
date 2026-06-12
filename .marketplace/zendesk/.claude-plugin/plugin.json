@@ -1,8 +1,0 @@
-{
-  "name": "zendesk",
-  "version": "1.0.1",
-  "description": "First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk",
-  "author": {
-    "name": "Fivetran"
-  }
-}
