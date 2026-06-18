@@ -655,7 +655,24 @@ Suggested viz: Stacked area — `date_day` on x-axis; layers by `status`.
 ## Discovery Mode
 
 If the user asks about data not in the tables above:
-1. **Find a specific table (preferred)** — pagination-immune and returns only the matches, so it stays cheap even on large connector schemas: `SELECT table_name FROM \`{PROJECT_ID}.{SCHEMA}.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
-2. Browse all tables: `bq ls --max_results=10000 {PROJECT_ID}:{SCHEMA}` (plain `bq ls` defaults to 50 rows and will silently truncate a larger schema — always pass `--max_results`, or prefer the filtered SQL above)
-3. Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:{SCHEMA}.<table>`
-4. Sample rows: `bq head -n 5 {PROJECT_ID}:{SCHEMA}.<table>`
+Stay within `{SCHEMA}`. If a documented table isn't found, report that honestly rather than hunting in other schemas.
+1. Find a specific table (preferred — pagination-immune, returns only the matches;
+   `INFORMATION_SCHEMA` works on all three warehouses):
+   - BigQuery: `SELECT table_name FROM \`{PROJECT_ID}.{SCHEMA}.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
+   - Snowflake: `SELECT table_name FROM {PROJECT_ID}.INFORMATION_SCHEMA.TABLES WHERE table_schema = '{SCHEMA}' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+   - Databricks: `SELECT table_name FROM {PROJECT_ID}.information_schema.tables WHERE table_schema = '{SCHEMA}' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+2. Browse all tables in the schema (warehouse-specific):
+   - BigQuery: `bq ls --max_results=10000 {PROJECT_ID}:{SCHEMA}`
+   - Snowflake: `SHOW TABLES IN SCHEMA {PROJECT_ID}.{SCHEMA};`
+   - Databricks: `SHOW TABLES IN {PROJECT_ID}.{SCHEMA};`
+3. List datasets/databases (warehouse-specific):
+   - BigQuery: `bq ls --max_results=10000 --project_id={PROJECT_ID}`
+   - Snowflake: `SHOW SCHEMAS IN DATABASE {PROJECT_ID};`
+   - Databricks: `SHOW SCHEMAS IN {PROJECT_ID};`
+4. Inspect a table's columns (warehouse-specific):
+   - BigQuery: `bq show --schema --format=prettyjson {PROJECT_ID}:{SCHEMA}.<table>`
+   - Snowflake: `DESC TABLE {PROJECT_ID}.{SCHEMA}.<table>;`
+   - Databricks: `DESCRIBE TABLE {PROJECT_ID}.{SCHEMA}.<table>;`
+5. Sample rows:
+   - BigQuery: `bq head -n 5 {PROJECT_ID}:{SCHEMA}.<table>`
+   - Snowflake/Databricks: `SELECT * FROM {PROJECT_ID}.{SCHEMA}.<table> LIMIT 5;`

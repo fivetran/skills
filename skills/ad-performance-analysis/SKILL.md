@@ -576,19 +576,22 @@ ORDER BY c.spend DESC
 ## Discovery Mode
 
 If the user asks about data not in the unified tables above:
-
+Stay within the dataset that `resolve` returned (`{UNIFIED_DATASET}`, `{SINGLE_SOURCE_DATASET}`, or `{RAW_DATASET}`). Do not browse the whole project hunting for other datasets — if a documented dataset returns nothing, report that honestly rather than substituting another.
 1. **First check the per-connector reference** for that platform (see
    "Per-Connector Drill-Down") — the table you need is usually documented there.
-2. If you still need to explore, stay **within the dataset that `resolve` returned**
-   for the relevant family (`{UNIFIED_DATASET}`, `{SINGLE_SOURCE_DATASET}`, or
-   `{RAW_DATASET}`). Do **not** `bq ls` the whole project hunting for other datasets,
-   and never fall back to `_demo` / `_dev` / `_test` variants — if a documented
-   dataset returns nothing, report that honestly rather than substituting another.
-   - **Find a specific table (preferred)** — pagination-immune and returns only the
-     matches, so it stays cheap even on large connector schemas:
-     `SELECT table_name FROM \`{PROJECT_ID}.<resolved_dataset>.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
-   - Browse all tables: `bq ls --max_results=10000 {PROJECT_ID}:<resolved_dataset>`
-     (plain `bq ls` defaults to 50 rows and will silently truncate a larger schema —
-     always pass `--max_results`, or prefer the filtered SQL above)
-   - Inspect schema: `bq show --schema --format=prettyjson {PROJECT_ID}:<resolved_dataset>.<table>`
-   - Sample rows: `bq head -n 5 {PROJECT_ID}:<resolved_dataset>.<table>`
+2. Find a specific table (preferred — pagination-immune, returns only the matches;
+   `INFORMATION_SCHEMA` works on all three warehouses):
+   - BigQuery: `SELECT table_name FROM \`{PROJECT_ID}.<resolved_dataset>.INFORMATION_SCHEMA.TABLES\` WHERE LOWER(table_name) LIKE '%<term>%' ORDER BY table_name`
+   - Snowflake: `SELECT table_name FROM {PROJECT_ID}.INFORMATION_SCHEMA.TABLES WHERE table_schema = '<resolved_dataset>' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+   - Databricks: `SELECT table_name FROM {PROJECT_ID}.information_schema.tables WHERE table_schema = '<resolved_dataset>' AND LOWER(table_name) LIKE '%<term>%' ORDER BY table_name;`
+3. Browse all tables in the schema (warehouse-specific):
+   - BigQuery: `bq ls --max_results=10000 {PROJECT_ID}:<resolved_dataset>`
+   - Snowflake: `SHOW TABLES IN SCHEMA {PROJECT_ID}.<resolved_dataset>;`
+   - Databricks: `SHOW TABLES IN {PROJECT_ID}.<resolved_dataset>;`
+4. Inspect a table's columns (warehouse-specific):
+   - BigQuery: `bq show --schema --format=prettyjson {PROJECT_ID}:<resolved_dataset>.<table>`
+   - Snowflake: `DESC TABLE {PROJECT_ID}.<resolved_dataset>.<table>;`
+   - Databricks: `DESCRIBE TABLE {PROJECT_ID}.<resolved_dataset>.<table>;`
+5. Sample rows:
+   - BigQuery: `bq head -n 5 {PROJECT_ID}:<resolved_dataset>.<table>`
+   - Snowflake/Databricks: `SELECT * FROM {PROJECT_ID}.<resolved_dataset>.<table> LIMIT 5;`
