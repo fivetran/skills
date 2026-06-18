@@ -19,6 +19,7 @@ Subcommands:
 import base64
 import concurrent.futures
 import datetime
+import threading
 import getpass
 import json
 import os
@@ -102,6 +103,7 @@ SKILL_MIN_REQUIRED: Dict[str, int] = {
 API_BASE      = os.environ.get("FIVETRAN_API_BASE_URL", "https://api.fivetran.com").rstrip("/")
 MOCK_FETCHER  = os.environ.get("ASA_FIVETRAN_FETCHER", "")
 _CURRENT_TOKEN: Optional[str] = None  # set by cmd_setup before any HTTP request
+_DATABRICKS_CLI_LOCK = threading.Lock()  # serializes CLI subprocesses to avoid token-cache write races
 
 
 def _config_dir() -> str:
@@ -499,10 +501,11 @@ def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False)
         "statement":    sql,
         "wait_timeout": f"{min(max(timeout, 5), 50)}s",
     })
-    r = subprocess.run(
-        ["databricks", "api", "post", "/api/2.0/sql/statements/", "--json", body],
-        capture_output=True, text=True, timeout=timeout + 10,
-    )
+    with _DATABRICKS_CLI_LOCK:
+        r = subprocess.run(
+            ["databricks", "api", "post", "/api/2.0/sql/statements/", "--json", body],
+            capture_output=True, text=True, timeout=timeout + 10,
+        )
     if r.returncode != 0:
         msg = r.stderr.strip()
         print(f"[asa] warn: databricks query failed: {msg}", file=sys.stderr)
@@ -1327,7 +1330,7 @@ def _readiness_query_databricks(catalog: str, schema: str, table: str, timeout: 
     date_col = "date_month" if _MONTHLY_TABLE_MARKER in table else "date_day"
     sql = (
         f"SELECT platform, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
-        f"FROM {catalog}.{schema}.{table} GROUP BY platform"
+        f"FROM `{catalog}`.`{schema}`.`{table}` GROUP BY platform"
     )
     return _databricks_query(sql, timeout=timeout, raise_on_error=True)
 
