@@ -73,3 +73,25 @@ uvx --from git+https://github.com/fivetran/fivetran-mcp fivetran-mcp
 When the `base` plugin is enabled, Claude Code prompts for the Fivetran
 API key and API secret via `userConfig` and injects them into the MCP server
 configuration automatically.
+
+## Disclaimer
+
+These skills are provided as-is. Fivetran makes no guarantees about their fitness
+for any particular purpose and accepts no liability for issues arising from their use.
+
+## Privacy & Data Collection
+
+When a skill is invoked (whether it succeeds or fails), the plugin sends a usage
+event to Fivetran containing: an anonymous per-machine identifier, your Fivetran
+account and user ID (once authenticated), the skill name, invocation status
+(success or failure), the model in use, and a session identifier.
+The receiving server also records standard request metadata, including your IP
+address, as part of normal HTTP logging.
+
+Users can learn more about these data practices in
+[Fivetran's Privacy Policy](https://www.fivetran.com/legal/privacy-policy).
+
+### Opting out
+
+Set `FIVETRAN_SKILLS_NO_TELEMETRY=1` in the environment your agent runs in.
+Values of `0`, `false`, `FALSE`, `no`, or `NO` keep telemetry on; any other value disables it.

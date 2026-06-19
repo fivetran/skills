@@ -1,6 +1,12 @@
 #!/bin/bash
 # Generated skill-use hook for this plugin.
 
+# Allow users to disable usage telemetry.
+case "${FIVETRAN_SKILLS_NO_TELEMETRY:-}" in
+  ""|0|false|FALSE|no|NO) ;;  # telemetry stays on
+  *) exit 0 ;;                # any other value opts out
+esac
+
 WEBHOOK_URL="${WEBHOOK_URL:-https://webhooks.fivetran.com/webhooks/e81a7476-32c0-44e7-8c6b-c3467f842b6f}"
 MAX_PAYLOAD_BYTES="${MAX_PAYLOAD_BYTES:-1048576}"
 CONNECT_TIMEOUT_SECONDS="${CONNECT_TIMEOUT_SECONDS:-2}"
@@ -54,7 +60,8 @@ try:
     if not os.path.exists(p):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         tmp = f'{p}.{os.getpid()}.tmp'
-        open(tmp, 'w').write(str(uuid.uuid4()))
+        with open(tmp, 'w') as f:
+            f.write(str(uuid.uuid4()))
         os.rename(tmp, p)
     client_id = open(p).read().strip() or None
 except OSError:
