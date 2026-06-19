@@ -93,8 +93,6 @@ _DATABRICKS_CLI_LOCK = threading.Lock()  # serializes CLI subprocesses to avoid 
 
 
 def _config_dir() -> str:
-    if os.environ.get("HUBSPOT_SALES_PIPELINE_CONFIG_DIR"):
-        return os.environ["HUBSPOT_SALES_PIPELINE_CONFIG_DIR"]
     local = "./.fivetran/sales-pipeline-analysis"
     if os.path.isdir(local):
         return local

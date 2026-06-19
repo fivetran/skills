@@ -90,8 +90,6 @@ _DATABRICKS_CLI_LOCK = threading.Lock()  # serializes CLI subprocesses to avoid 
 
 
 def _config_dir() -> str:
-    if os.environ.get("STORE_PERFORMANCE_CONFIG_DIR"):
-        return os.environ["STORE_PERFORMANCE_CONFIG_DIR"]
     local = "./.fivetran/store-performance-analysis"
     if os.path.isdir(local):
         return local

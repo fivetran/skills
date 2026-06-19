@@ -92,8 +92,6 @@ _DATABRICKS_CLI_LOCK = threading.Lock()  # serializes CLI subprocesses to avoid 
 
 
 def _config_dir() -> str:
-    if os.environ.get("MARKETING_AUTOMATION_CONFIG_DIR"):
-        return os.environ["MARKETING_AUTOMATION_CONFIG_DIR"]
     local = "./.fivetran/marketing-automation-analysis"
     if os.path.isdir(local):
         return local
