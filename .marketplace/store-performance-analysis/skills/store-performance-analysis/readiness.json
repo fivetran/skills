@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "category": "ecommerce",
     "hero": "How is your store performing?",
-    "description": "Answer e-commerce performance questions using Fivetran-synced Shopify data. Computes GMV, net revenue, AOV, order count, repeat customer rate, refund rate, top products, BFCM and seasonality detection, new vs returning revenue, and customer cohorts — directly from raw Shopify connector tables. No dbt Quickstart required.\n",
+    "description": "Wondering where revenue is going? Diagnose what's driving it and what's leaking, with answers pulled from your store data.\n",
     "tags": [
       "GMV",
       "AOV",
@@ -37,7 +37,6 @@
     "example_questions": [
       "What was GMV last month vs the prior month?",
       "Which 10 products drove the most revenue this quarter?",
-      "What's our repeat customer rate for cohorts from Q1?",
       "Show refund rate by week over the past 90 days",
       "How did Black Friday 2024 compare to Black Friday 2023?",
       "What's the revenue split between new and returning customers?"

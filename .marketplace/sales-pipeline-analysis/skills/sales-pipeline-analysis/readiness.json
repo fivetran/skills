@@ -1,11 +1,11 @@
 {
   "metadata": {
     "app_id": "sales-pipeline-analysis",
-    "name": "HubSpot Sales Pipeline",
+    "name": "Sales Pipeline",
     "version": "1.0.0",
     "category": "sales",
     "hero": "What does your pipeline actually look like?",
-    "description": "Answer HubSpot sales pipeline and funnel questions using Fivetran-synced HubSpot data in BigQuery, Snowflake, or Databricks. Analyzes deal stages, pipeline conversion rates, win/loss outcomes, rep performance, deal velocity, and stage aging using the HubSpot dbt package models.\n",
+    "description": "Understand the full state of your sales pipeline without writing SQL or pulling reports.\n",
     "tags": [
       "pipeline",
       "funnel",
@@ -39,8 +39,7 @@
       "Which stage has the worst conversion rate?",
       "Show me deals that have been in 'Proposal Sent' for more than 30 days",
       "Who closed the most deals last month?",
-      "What's the average sales cycle length for deals over $50K?",
-      "How does our Q3 pipeline compare to Q2?"
+      "What's the average sales cycle length for deals over $50K?"
     ]
   },
   "freshness": {

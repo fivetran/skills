@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "category": "marketing",
     "hero": "How is your marketing automation actually performing?",
-    "description": "Answer marketing automation questions using Fivetran-synced data in BigQuery, Snowflake, or Databricks. Analyzes funnel velocity, lead lifecycle, nurture stream performance, email engagement, campaign performance, and lead source attribution. Today supports Marketo via the fivetran/marketo dbt package; designed to add HubSpot Marketing, Pardot, Iterable, Braze, and other marketing automation tools as separate connector options.\n",
+    "description": "A working analyst for your marketing automation engine, ready to answer whatever question you bring.\n",
     "tags": [
       "marketing automation",
       "funnel velocity",
@@ -28,24 +28,19 @@
       }
     },
     "capabilities": [
-      { "name": "Funnel Velocity",         "description": "Days between lead lifecycle stages (creation -> MQL -> SAL -> SQL -> opportunity) by cohort, source, or rep" },
-      { "name": "Lead Lifecycle",          "description": "Conversion rates at each stage of the lead funnel, with cohort and source breakdowns" },
-      { "name": "Nurture Performance",     "description": "Per-program performance for nurture streams: enter rate, exit rate, days in nurture, downstream conversion" },
-      { "name": "Email Engagement",        "description": "Send / delivery / open / click / unsubscribe / bounce rates by campaign, program, template, and time" },
-      { "name": "Best & Worst Emails",     "description": "Top and bottom email templates by open rate, click rate, unsubscribe rate" },
-      { "name": "Campaign Performance",    "description": "Engagement and conversion rolled up to campaign level, including SFDC campaign linkage" },
-      { "name": "Lead Source Attribution", "description": "Volume and quality of leads by acquisition source; conversion rate and time-to-convert per source" },
-      { "name": "Engagement Scoring",      "description": "Behavior and demographic score trends; identify highly engaged and disengaged leads" }
+      { "name": "Funnel & Lifecycle",      "description": "Conversion rates and time between lead stages (creation, MQL, SAL, SQL, opportunity), by cohort or source" },
+      { "name": "Nurture Performance",     "description": "Per-program enter and exit rates, time in nurture, and downstream conversion" },
+      { "name": "Email Engagement",        "description": "Open, click, unsubscribe, and bounce rates, with best and worst templates" },
+      { "name": "Campaign Performance",    "description": "Engagement and conversion by campaign, including Salesforce campaign linkage" },
+      { "name": "Lead Source Attribution", "description": "Lead volume and quality by source, with conversion and time-to-convert" },
+      { "name": "Engagement Scoring",      "description": "Behavior and demographic score trends to flag engaged and disengaged leads" }
     ],
     "example_questions": [
       "What's the average time from MQL to SQL this quarter?",
+      "Where are leads dropping off in the funnel?",
       "Which nurture program is converting leads fastest?",
       "Show me the top 10 email templates by click rate over the last 90 days",
-      "Which lead sources produce the highest conversion to opportunity?",
-      "Where are leads dropping off in the funnel?",
-      "Which programs have the highest unsubscribe rate?",
-      "How many leads entered each nurture stream last month, and how many exited?",
-      "Compare email open rates between batch and trigger campaigns this quarter"
+      "Which lead sources produce the highest conversion to opportunity?"
     ]
   },
   "freshness": {

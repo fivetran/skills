@@ -1,11 +1,11 @@
 {
   "metadata": {
     "app_id": "customer-support-analysis",
-    "name": "Zendesk Support",
+    "name": "Customer Support",
     "version": "1.0.0",
     "category": "support",
     "hero": "How is your support team actually performing?",
-    "description": "Answer Zendesk customer support questions using Fivetran-synced data via BigQuery, Snowflake, or Databricks. Analyzes ticket volume and trends, first response and resolution times (business + calendar), backlog aging, agent performance, SLA breach rates, CSAT/satisfaction scores, and channel/priority breakdowns using the fivetran/zendesk dbt package models (zendesk__ticket_enriched, zendesk__ticket_metrics, zendesk__ticket_field_history, zendesk__ticket_backlog, zendesk__ticket_summary, zendesk__sla_policies).\n",
+    "description": "Quickly understand how your customer support team is performing day to day, so you can catch problems before they show up in escalations.\n",
     "tags": [
       "customer support",
       "tickets",
@@ -28,24 +28,19 @@
       }
     },
     "capabilities": [
-      { "name": "Ticket Volume & Trends",   "description": "Tickets created vs solved over time, broken down by channel, priority, type, group, or brand" },
-      { "name": "Resolution Time",          "description": "First reply, first resolution, and full resolution time (both business and calendar hours) by priority, channel, and assignee" },
-      { "name": "Backlog Health",           "description": "Open ticket count and aging, by priority and assignee — surface tickets that have been unsolved beyond expected SLAs" },
-      { "name": "Agent Performance",        "description": "Per-agent ticket counts, resolution times, replies, handoffs, and satisfaction scores" },
-      { "name": "SLA Performance",          "description": "SLA breach rate and time-to-breach by metric (first_reply_time, next_reply_time, agent_work_time, requester_wait_time), business vs calendar hours" },
-      { "name": "Satisfaction (CSAT)",      "description": "Satisfaction score distribution, good-to-bad / bad-to-good transitions, scores by agent and channel" },
-      { "name": "Channel & Priority Mix",   "description": "Where tickets come from (channel) and how they distribute across priorities and types" },
-      { "name": "Reopens & Reassignments",  "description": "Tickets reopened, reassigned, or with high handoff counts — proxies for resolution quality" }
+      { "name": "Ticket Volume & Trends", "description": "Tickets created vs solved over time, by channel, priority, type, or group" },
+      { "name": "Resolution Time",        "description": "First reply, first resolution, and full resolution, in business or calendar hours" },
+      { "name": "Backlog Health",         "description": "Open ticket count and aging by priority and assignee" },
+      { "name": "Agent Performance",      "description": "Per-agent volume, resolution time, replies, reopens, and CSAT" },
+      { "name": "SLA Performance",        "description": "Breach rate and time-to-breach by SLA metric" },
+      { "name": "Satisfaction (CSAT)",    "description": "Score distribution and trends by agent and channel" }
     ],
     "example_questions": [
       "What's our average first reply time over the last 30 days, business hours only?",
-      "Which tickets have been open longer than 7 days and are unassigned?",
-      "Who are our top 10 agents by ticket volume this quarter, and how do their resolution times compare?",
-      "What's our SLA breach rate this quarter, and which metric is driving most breaches?",
-      "How does CSAT distribute by channel?",
-      "How many tickets do we have in backlog right now, and what's the priority breakdown?",
-      "Which tickets were reopened more than twice in the last 90 days?",
-      "What's the trend of one-touch resolutions over the last 12 months?"
+      "Who are our top 10 agents by ticket volume this quarter, and how do resolution times compare?",
+      "What's our SLA breach rate this quarter, and which metric is driving it?",
+      "How many tickets are in backlog right now, and what's the priority breakdown?",
+      "How does CSAT distribute by channel?"
     ]
   },
   "freshness": {
