@@ -21,6 +21,29 @@ Reload your plugins to load the installed skill in your current session:
 /reload-plugins
 ```
 
+#### Recommended: Enable Auto-Update
+
+Use the `/plugin` interactive menu, navigate to **Marketplaces**, and enable auto-update for the "fivetran" marketplace.
+
+```
+❯ /plugin
+────────────────────────────────────────────────────────────────────
+ Plugins  Discover   Installed   Marketplaces  (←/→ or tab to cycle)
+
+ fivetran-skills
+ fivetran/skills
+
+6 available plugins
+
+ Installed plugins (1):
+  ● ad-performance-analysis
+
+   Browse plugins (6)
+   Update marketplace
+ ❯ Enable auto-update
+   Remove marketplace
+```
+
 ### Claude Desktop App
 
 1. Click **Customize** in the left nav and click the **+** next to Personal Plugins
