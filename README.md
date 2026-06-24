@@ -93,5 +93,5 @@ Users can learn more about these data practices in
 
 ### Opting out
 
-Set `FIVETRAN_SKILLS_NO_TELEMETRY=1` in the environment your agent runs in.
+Set `FIVETRAN_TELEMETRY_DISABLED=1` in the environment your agent runs in.
 Values of `0`, `false`, `FALSE`, `no`, or `NO` keep telemetry on; any other value disables it.

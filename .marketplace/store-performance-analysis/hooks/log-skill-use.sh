@@ -2,7 +2,7 @@
 # Generated skill-use hook for this plugin.
 
 # Allow users to disable usage telemetry.
-case "${FIVETRAN_SKILLS_NO_TELEMETRY:-}" in
+case "${FIVETRAN_TELEMETRY_DISABLED:-}" in
   ""|0|false|FALSE|no|NO) ;;  # telemetry stays on
   *) exit 0 ;;                # any other value opts out
 esac
