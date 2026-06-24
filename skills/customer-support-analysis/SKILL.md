@@ -130,7 +130,7 @@ If the question is general ("how is support performing?"), default to Level 1 (v
 ### 4. Surface anomalies proactively
 On every query, scan for:
 - Tickets in backlog longer than the priority's typical SLA (e.g. urgent > 1 day, high > 2 days, normal > 7 days)
-- Agents handling > 2× the team-average tickets per day (overload)
+- Agents handling > 2× the team-average tickets (overload) — when computing the team average, apply `HAVING tickets_handled >= 10` to exclude agents with negligible volume; including near-zero agents deflates the average and inflates overload ratios. When reporting this anomaly, disclose the assumption inline: *"Agents with fewer than 10 tickets over the 90-day window were excluded from the baseline to avoid skewing the average. If that threshold doesn't fit your team's volume, let me know and I can rerun with a different minimum."*
 - Single tickets with > 3 reopens or > 5 handoffs (resolution churn)
 - SLA metrics where breach rate spiked > 10 percentage points vs prior period
 - CSAT dropping > 5 percentage points vs prior period
@@ -148,7 +148,7 @@ Run queries behind the scenes. The user only sees results, not SQL.
 Maintain context across messages. If the user asked about a specific group and then says "now by channel," build on the prior query's filters.
 
 ### 8. Handle deleted tickets and inactive users silently
-Always filter `_fivetran_deleted = false` on `zendesk__ticket_enriched` and `zendesk__ticket_metrics`. For agent-level rollups, prefer `is_assignee_active = true` (or disclose when including inactive agents).
+Always filter `_fivetran_deleted IS NOT TRUE` on `zendesk__ticket_enriched` and `zendesk__ticket_metrics`. Use `IS NOT TRUE` not `= false` — the column is NULL in some deployments and `= false` silently drops all rows when that happens. For agent-level rollups, prefer `is_assignee_active = true` (or disclose when including inactive agents).
 
 ### 9. Disclose interpretations of business terms
 If the user asks about a term that doesn't map to a column (e.g. "best agent", "good resolution time", "stalled ticket", "high-touch ticket"), infer the narrowest reasonable rule from the data and disclose the assumption before presenting metrics. Tell the user they can override it.
@@ -158,6 +158,11 @@ Zendesk reports both. They diverge significantly: a ticket created Friday evenin
 
 ### 11. Disclose status filters
 Zendesk has 6 ticket statuses: `new`, `open`, `pending`, `hold`, `solved`, `closed`. "Open tickets" can mean any of: not-closed (new+open+pending+hold), or strictly `open`, or backlog (everything except solved/closed/deleted). State the filter you used.
+
+Zendesk uses `status = 'deleted'` natively for soft-deleted tickets in the API. The dbt staging layer passes this through without filtering (unlike `stg_zendesk__group` and `stg_zendesk__schedule`, which filter `WHERE NOT coalesce(_fivetran_deleted, false)` — the ticket staging model does not). Always exclude `status = 'deleted'` from backlog and stalled-ticket queries — the dbt package's `unsolved_ticket_age_minutes` formula includes these rows (since `'deleted' NOT IN ('solved', 'closed')` is true), which inflates ages significantly.
+
+### 12. Disclose maturity bias on ongoing periods
+When the current period is not yet complete (e.g. mid-month), resolution time and CSAT averages are biased toward faster and already-rated tickets — unsolved and unrated tickets have NULL values and are excluded from the averages. Always note this when presenting period-over-period metrics for an in-progress window.
 
 ## Readiness Check
 
@@ -235,7 +240,7 @@ Prints exact install and auth commands if anything is missing.
 |---|---|---|
 | `ticket_id` | INTEGER | Primary key |
 | `created_at`, `updated_at` | TIMESTAMP | Ticket lifecycle |
-| `status` | STRING | `new`, `open`, `pending`, `hold`, `solved`, `closed` |
+| `status` | STRING | `new`, `open`, `pending`, `hold`, `solved`, `closed`, `deleted` — Zendesk uses `'deleted'` natively for soft-deleted tickets; exclude from backlog queries |
 | `priority` | STRING | `urgent`, `high`, `normal`, `low` (NULL when unset) |
 | `type` | STRING | `problem`, `incident`, `question`, `task` (NULL when unset) |
 | `created_channel` | STRING | Channel the ticket was created from (email, web, chat, API, …) |
@@ -254,7 +259,7 @@ Prints exact install and auth commands if anything is missing.
 | `ticket_satisfaction_score` | STRING | Latest satisfaction: `good`, `bad`, `offered`, `unoffered`, NULL |
 | `ticket_first_satisfaction_score` | STRING | First score recorded |
 | `is_good_to_bad_satisfaction_score`, `is_bad_to_good_satisfaction_score` | BOOLEAN | Transition flags |
-| `_fivetran_deleted` | BOOLEAN | Soft-delete flag — always filter `= false` |
+| `_fivetran_deleted` | BOOLEAN | Soft-delete flag — always filter `IS NOT TRUE` (column is NULL in some deployments; `= false` silently drops all rows) |
 | `_fivetran_synced` | TIMESTAMP | Last sync timestamp |
 | `source_relation` | STRING | For multi-source setups |
 
@@ -267,8 +272,8 @@ Inherits everything from `zendesk__ticket_enriched` and adds time / reply / reop
 | `first_reply_time_business_minutes` | NUMERIC | Time from ticket creation to first public agent reply, in business hours |
 | `first_reply_time_calendar_minutes` | NUMERIC | Same, in calendar hours |
 | `total_reply_time_calendar_minutes` | NUMERIC | Combined calendar time between all end-user comments and the next agent reply |
-| `first_resolution_business_minutes` / `first_resolution_calendar_minutes` | NUMERIC | Created → first time in `solved` |
-| `full_resolution_business_minutes` / `final_resolution_calendar_minutes` | NUMERIC | Created → last time in `solved` |
+| `first_resolution_business_minutes` / `first_resolution_calendar_minutes` | NUMERIC | Created → first time in `solved` — **NULL for all unsolved/open/pending/hold tickets**; `AVG()` silently excludes them |
+| `full_resolution_business_minutes` / `final_resolution_calendar_minutes` | NUMERIC | Created → last time in `solved` — **NULL for all unsolved/open/pending/hold tickets**; `AVG()` silently excludes them |
 | `first_solved_at`, `last_solved_at` | TIMESTAMP | First and last solved transitions |
 | `agent_work_time_in_business_minutes` / `..._calendar_minutes` | NUMERIC | Time in `new` or `open` |
 | `requester_wait_time_in_business_minutes` / `..._calendar_minutes` | NUMERIC | Time in `new`, `open`, or `hold` |
@@ -347,8 +352,8 @@ Compute all derived metrics in SQL. Use `SAFE_DIVIDE` on BigQuery or `NULLIF(...
 | Full resolution time (avg, business min) | `AVG(full_resolution_business_minutes)` |
 | Resolution rate this period | `SAFE_DIVIDE(COUNT(CASE WHEN first_solved_at >= <period_start> THEN ticket_id END), COUNT(CASE WHEN created_at >= <period_start> THEN ticket_id END))` |
 | Tickets created (period) | `COUNT(CASE WHEN created_at BETWEEN <start> AND <end> THEN ticket_id END)` |
-| Tickets solved (period) | `COUNT(CASE WHEN first_solved_at BETWEEN <start> AND <end> THEN ticket_id END)` |
-| Backlog (point-in-time) | `COUNT(CASE WHEN status NOT IN ('solved', 'closed') AND _fivetran_deleted = false THEN ticket_id END)` |
+| Tickets solved (period) | `COUNT(CASE WHEN DATE(first_solved_at) BETWEEN <start> AND <end> THEN ticket_id END)` — filter on `first_solved_at`, **not** `created_at`. In single-pass queries where the `WHERE` clause scopes to `created_at`, you must still use `DATE(first_solved_at) BETWEEN` inside the `CASE WHEN` to count tickets actually closed in the period. |
+| Backlog (point-in-time) | `COUNT(CASE WHEN status NOT IN ('solved', 'closed', 'deleted') AND _fivetran_deleted IS NOT TRUE THEN ticket_id END)` |
 | SLA breach rate | `SAFE_DIVIDE(SUM(CASE WHEN is_sla_breach = true THEN 1 ELSE 0 END), COUNT(*))` on `zendesk__sla_policies`, filtered to non-active SLAs |
 | CSAT score (good %) | `SAFE_DIVIDE(COUNT(CASE WHEN ticket_satisfaction_score = 'good' THEN ticket_id END), COUNT(CASE WHEN ticket_satisfaction_score IN ('good', 'bad') THEN ticket_id END))` |
 | One-touch resolution rate | `SAFE_DIVIDE(COUNT(CASE WHEN is_one_touch_resolution = true THEN ticket_id END), COUNT(CASE WHEN first_solved_at IS NOT NULL THEN ticket_id END))` |
@@ -359,7 +364,8 @@ Compute all derived metrics in SQL. Use `SAFE_DIVIDE` on BigQuery or `NULLIF(...
 
 - **`first_solved_at` is the first time the ticket was in `solved` status.** A ticket can be reopened and resolved again; `last_solved_at` captures the latest resolution. For "resolution time" questions, default to `first_resolution_*` (more representative); use `full_resolution_*` (= `final_resolution_*`) for tickets that bounced.
 - **Resolution is `status='solved'` not `status='closed'`.** Closed is a later read-only state Zendesk applies automatically after a delay. Don't filter on closed for "resolved".
-- **Backlog = not solved/closed/deleted.** For backlog questions filter `status NOT IN ('solved', 'closed') AND _fivetran_deleted = false`. Different teams have different conventions; disclose your filter.
+- **Backlog = not solved/closed/deleted.** For backlog questions filter `status NOT IN ('solved', 'closed', 'deleted') AND _fivetran_deleted IS NOT TRUE`. The `'deleted'` exclusion is required because Zendesk uses this status natively for soft-deleted tickets, and the dbt staging layer passes it through unfiltered — unlike other staging models (group, schedule) which explicitly exclude deleted records. Different teams have different conventions; disclose your filter.
+- **Resolution time columns are NULL for unsolved tickets.** `first_resolution_business_minutes`, `full_resolution_business_minutes`, `first_resolution_calendar_minutes`, and `final_resolution_calendar_minutes` are set to NULL by the model for any ticket not in `solved` or `closed` status. `AVG()` over a mixed population silently excludes all open/pending/hold tickets. When querying resolution times, either scope to solved tickets (`WHERE first_solved_at IS NOT NULL`) or disclose that the average reflects only resolved tickets.
 - **Business hours vs calendar hours diverge a lot.** Always state which one. Default to business hours for SLA-shaped questions, calendar hours for raw responsiveness.
 - **`unreplied_ticket_count`** in `zendesk__ticket_summary` counts tickets that have never had an agent reply (any agent, any time). Compare against `unreplied_unsolved_ticket_count` for the actionable subset.
 - **SLA policies must be configured in Zendesk** for `zendesk__sla_policies` to have rows. Customers without configured SLAs will see an empty table.
@@ -372,9 +378,9 @@ Compute all derived metrics in SQL. Use `SAFE_DIVIDE` on BigQuery or `NULLIF(...
   SELECT
     MAX(DATE(created_at)) AS latest_ticket_created,
     COUNT(ticket_id)      AS total_tickets,
-    SUM(CASE WHEN status NOT IN ('solved', 'closed') THEN 1 ELSE 0 END) AS current_backlog
+    SUM(CASE WHEN status NOT IN ('solved', 'closed', 'deleted') THEN 1 ELSE 0 END) AS current_backlog
   FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_enriched`
-  WHERE _fivetran_deleted = false
+  WHERE _fivetran_deleted IS NOT TRUE
   ```
 - Date filters: prefer `CURRENT_DATE()` for snapshot/backlog queries; `DATE_TRUNC` / `DATE_SUB` for cohort analysis.
 - `zendesk__ticket_field_history` can have **millions of rows** — always filter `date_day` aggressively.
@@ -449,7 +455,7 @@ For the full payload schema, see [`dashboard-schema.md`](./dashboard-schema.md).
 ## Cost Guardrails
 
 > **Queries cost money.** Always:
-> - Filter `_fivetran_deleted = false` on `zendesk__ticket_enriched` / `zendesk__ticket_metrics`
+> - Filter `_fivetran_deleted IS NOT TRUE` on `zendesk__ticket_enriched` / `zendesk__ticket_metrics`
 > - Filter `date_day` aggressively on `zendesk__ticket_field_history` and `zendesk__ticket_backlog` (these tables can be millions of rows)
 > - For per-agent / per-org queries, also filter on a recent `created_at` window
 > - Select only needed columns — `zendesk__ticket_enriched` and `_metrics` are very wide
@@ -459,6 +465,8 @@ For the full payload schema, see [`dashboard-schema.md`](./dashboard-schema.md).
 
 - **READ ONLY** — Do not write data to this project.
 - **Resolution = `solved`, not `closed`.** Closed is a later auto-applied state. Filter on solved.
+- **Resolution time columns are NULL for unsolved tickets.** `first_resolution_business_minutes`, `full_resolution_business_minutes`, `first_resolution_calendar_minutes`, and `final_resolution_calendar_minutes` are NULL for any ticket not yet solved. `AVG()` silently excludes these; when computing avg resolution time, scope to `WHERE first_solved_at IS NOT NULL` or disclose that the figure covers only resolved tickets.
+- **Exclude `status = 'deleted'` from backlog queries.** Zendesk uses this status natively for soft-deleted tickets. The dbt ticket staging model passes it through unfiltered (the package's `stg_zendesk__group` and `stg_zendesk__schedule` filter deleted records, but `stg_zendesk__ticket` does not). The age columns include these rows, inflating ages. Always use `status NOT IN ('solved', 'closed', 'deleted')`.
 - **Reply / resolution times in `zendesk__ticket_metrics` are in MINUTES.** Convert to hours for display (`/ 60`) and disclose the unit.
 - **Business vs calendar hours diverge significantly.** Always state which.
 - **Sentinel: `is_assignee_active = false`** is common for off-boarded agents whose old tickets still show in the data. Disclose when including / excluding them.
@@ -469,17 +477,69 @@ For the full payload schema, see [`dashboard-schema.md`](./dashboard-schema.md).
 
 > Note: queries assume BigQuery syntax and `model_tier == single_source`. For Snowflake / Databricks, adapt identifier quoting and replace `SAFE_DIVIDE(a, b)` with `a / NULLIF(b, 0)`. Replace `{PROJECT_ID}` and `{SCHEMA}` with resolved values from `resolve zendesk`.
 
+### Period-over-period comparison (current 30 days vs prior 30 days)
+Use four CTEs: `cur`/`prior` scoped by `created_at` (drives tickets_created, avg reply/resolution, and CSAT); `cur_solved`/`prior_solved` scoped by `first_solved_at` (drives tickets_solved independently). Do NOT scope tickets_solved to `created_at`; that counts only tickets created-and-solved in the window and misses tickets created before the window but solved within it.
+```sql
+WITH
+  cur AS (
+    SELECT *
+    FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
+    WHERE _fivetran_deleted IS NOT TRUE
+      AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  ),
+  prior AS (
+    SELECT *
+    FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
+    WHERE _fivetran_deleted IS NOT TRUE
+      AND DATE(created_at) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
+                               AND DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
+  ),
+  cur_solved AS (
+    SELECT ticket_id
+    FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
+    WHERE _fivetran_deleted IS NOT TRUE
+      AND DATE(first_solved_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  ),
+  prior_solved AS (
+    SELECT ticket_id
+    FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
+    WHERE _fivetran_deleted IS NOT TRUE
+      AND DATE(first_solved_at) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
+                                    AND DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)
+  )
+SELECT
+  'current' AS period,
+  COUNT(*)                                                                         AS tickets_created,
+  (SELECT COUNT(*) FROM cur_solved)                                                AS tickets_solved,
+  ROUND(AVG(first_reply_time_business_minutes) / 60.0, 1)                          AS avg_first_reply_h,
+  ROUND(AVG(first_resolution_business_minutes) / 60.0, 1)                          AS avg_resolution_h,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN ticket_satisfaction_score = 'good' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN ticket_satisfaction_score IN ('good','bad') THEN 1 ELSE 0 END)) * 100, 1) AS csat_pct
+FROM cur
+UNION ALL
+SELECT
+  'prior' AS period,
+  COUNT(*),
+  (SELECT COUNT(*) FROM prior_solved),
+  ROUND(AVG(first_reply_time_business_minutes) / 60.0, 1),
+  ROUND(AVG(first_resolution_business_minutes) / 60.0, 1),
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN ticket_satisfaction_score = 'good' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN ticket_satisfaction_score IN ('good','bad') THEN 1 ELSE 0 END)) * 100, 1)
+FROM prior
+```
+Suggested viz: KPI tiles with period-over-period change annotations.
+
 ### Ticket volume and resolution snapshot (last 30 days)
 ```sql
 WITH base AS (
   SELECT *
   FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-  WHERE _fivetran_deleted = false
+  WHERE _fivetran_deleted IS NOT TRUE
     AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 )
 SELECT
   COUNT(*)                                                              AS tickets_created,
-  SUM(CASE WHEN first_solved_at IS NOT NULL THEN 1 ELSE 0 END)          AS tickets_solved,
+  SUM(CASE WHEN DATE(first_solved_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS tickets_solved,
   ROUND(AVG(first_reply_time_business_minutes) / 60.0, 1)               AS avg_first_reply_h_business,
   ROUND(AVG(first_resolution_business_minutes) / 60.0, 1)               AS avg_first_resolution_h_business,
   ROUND(AVG(full_resolution_business_minutes) / 60.0, 1)                AS avg_full_resolution_h_business,
@@ -498,7 +558,7 @@ SELECT
   ROUND(AVG(first_resolution_business_minutes) / 60.0, 1)                AS avg_first_resolution_h,
   ROUND(AVG(full_resolution_business_minutes) / 60.0, 1)                 AS avg_full_resolution_h
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
+WHERE _fivetran_deleted IS NOT TRUE
   AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 GROUP BY 1
 ORDER BY
@@ -516,7 +576,7 @@ SELECT
   COUNT(CASE WHEN first_solved_at IS NOT NULL THEN ticket_id END)        AS tickets_solved,
   ROUND(AVG(first_resolution_business_minutes) / 60.0, 1)                AS avg_first_resolution_h
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
+WHERE _fivetran_deleted IS NOT TRUE
   AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
 GROUP BY 1
 ORDER BY 1
@@ -533,8 +593,8 @@ SELECT
   SUM(CASE WHEN unsolved_ticket_age_minutes / 60.0 / 24.0 > 7  THEN 1 ELSE 0 END) AS over_7_days,
   SUM(CASE WHEN unsolved_ticket_age_minutes / 60.0 / 24.0 > 30 THEN 1 ELSE 0 END) AS over_30_days
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
-  AND status NOT IN ('solved', 'closed')
+WHERE _fivetran_deleted IS NOT TRUE
+  AND status NOT IN ('solved', 'closed', 'deleted')
 GROUP BY 1
 ORDER BY
   CASE COALESCE(priority, 'unset')
@@ -555,8 +615,8 @@ SELECT
   ROUND(unsolved_ticket_age_minutes / 60.0 / 24.0, 1)                          AS open_days,
   ROUND(unsolved_ticket_age_since_update_minutes / 60.0 / 24.0, 1)             AS days_since_update
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
-  AND status NOT IN ('solved', 'closed')
+WHERE _fivetran_deleted IS NOT TRUE
+  AND status NOT IN ('solved', 'closed', 'deleted')
   AND unsolved_ticket_age_since_update_minutes / 60.0 / 24.0 > 7
 ORDER BY days_since_update DESC
 LIMIT 50
@@ -577,7 +637,7 @@ SELECT
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN ticket_satisfaction_score = 'good' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN ticket_satisfaction_score IN ('good','bad') THEN 1 ELSE 0 END)) * 100, 1) AS csat_good_pct
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
+WHERE _fivetran_deleted IS NOT TRUE
   AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
   AND assignee_id IS NOT NULL
   AND is_assignee_active = true
@@ -615,7 +675,7 @@ SELECT
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN ticket_satisfaction_score = 'good' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN ticket_satisfaction_score IN ('good','bad') THEN 1 ELSE 0 END)) * 100, 1) AS csat_good_pct
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
+WHERE _fivetran_deleted IS NOT TRUE
   AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
 GROUP BY 1
 ORDER BY 1
@@ -632,7 +692,7 @@ SELECT
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN ticket_satisfaction_score = 'good' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN ticket_satisfaction_score IN ('good','bad') THEN 1 ELSE 0 END)) * 100, 1) AS csat_good_pct
 FROM `{PROJECT_ID}.{SCHEMA}.zendesk__ticket_metrics`
-WHERE _fivetran_deleted = false
+WHERE _fivetran_deleted IS NOT TRUE
   AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 GROUP BY 1
 ORDER BY tickets DESC

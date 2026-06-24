@@ -1221,35 +1221,44 @@ _DATE_COL_MAP = {
     "zendesk__ticket_field_history": "date_day",
     "zendesk__ticket_backlog":       "date_day",
     "zendesk__sla_policies":         "sla_applied_at",
-    "zendesk__ticket_summary":       "_fivetran_synced",
+    "zendesk__ticket_summary":       None,  # single-row aggregate; no source_relation or meaningful date col
 }
 _DEFAULT_DATE_COL = "created_at"
 
 
 def _readiness_query_bq(project: str, schema: str, table: str, timeout: int = 30) -> Optional[List[dict]]:
     date_col = _DATE_COL_MAP.get(table, _DEFAULT_DATE_COL)
-    sql = (
-        f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS row_count "
-        f"FROM `{project}.{schema}.{table}` GROUP BY source_relation"
-    )
+    if date_col is None:
+        sql = f"SELECT NULL AS source_relation, NULL AS latest_date, COUNT(*) AS row_count FROM `{project}.{schema}.{table}`"
+    else:
+        sql = (
+            f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS row_count "
+            f"FROM `{project}.{schema}.{table}` GROUP BY source_relation"
+        )
     return _bq_query(sql, timeout=timeout)
 
 
 def _readiness_query_snow(database: str, schema: str, table: str, timeout: int = 30) -> Optional[List]:
     date_col = _DATE_COL_MAP.get(table, _DEFAULT_DATE_COL)
-    sql = (
-        f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
-        f"FROM {database}.{schema}.{table} GROUP BY source_relation"
-    )
+    if date_col is None:
+        sql = f"SELECT NULL AS source_relation, NULL AS latest_date, COUNT(*) AS rows FROM {database}.{schema}.{table}"
+    else:
+        sql = (
+            f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
+            f"FROM {database}.{schema}.{table} GROUP BY source_relation"
+        )
     return _snow_query(sql, timeout=timeout)
 
 
 def _readiness_query_databricks(catalog: str, schema: str, table: str, timeout: int = 30) -> Optional[List]:
     date_col = _DATE_COL_MAP.get(table, _DEFAULT_DATE_COL)
-    sql = (
-        f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
-        f"FROM `{catalog}`.`{schema}`.`{table}` GROUP BY source_relation"
-    )
+    if date_col is None:
+        sql = f"SELECT NULL AS source_relation, NULL AS latest_date, COUNT(*) AS rows FROM `{catalog}`.`{schema}`.`{table}`"
+    else:
+        sql = (
+            f"SELECT source_relation, MAX({date_col}) AS latest_date, COUNT(*) AS rows "
+            f"FROM `{catalog}`.`{schema}`.`{table}` GROUP BY source_relation"
+        )
     return _databricks_query(sql, timeout=timeout)
 
 
