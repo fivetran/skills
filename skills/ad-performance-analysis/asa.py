@@ -911,6 +911,7 @@ def cmd_setup(
             "service":       c.get("service", ""),
             "schema":        c.get("schema", "") or "",
             "sync_state":    status.get("sync_state", ""),
+            "succeeded_at":  c.get("succeeded_at") or "",
             "active":        is_active,
         })
 
@@ -923,14 +924,20 @@ def cmd_setup(
         and t.get("id")
     ]
 
+    # Fetch transformation details in small parallel batches to avoid rate-limiting the
+    # Fivetran API while still being faster than pure sequential.  The list endpoint does
+    # not expose package_name or connection_ids, so per-transformation detail calls are
+    # required.  A batch size of 4 keeps concurrency bounded.
+    _TXFM_BATCH = 4
+
     txfm_details: List[dict] = []
-    if active_txfm_ids:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
-            futures = {pool.submit(_fetch_txfm_detail, tid): tid for tid in active_txfm_ids}
-            for fut in concurrent.futures.as_completed(futures):
-                result = fut.result()
-                if result:
-                    txfm_details.append(result)
+    for i in range(0, len(active_txfm_ids), _TXFM_BATCH):
+        batch = active_txfm_ids[i:i + _TXFM_BATCH]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            for detail in pool.map(_fetch_txfm_detail, batch):
+                if not detail:
+                    continue
+                txfm_details.append(detail)
 
     # Build QDM registry: qdm_type -> detail dict
     qdm_registry: Dict[str, dict] = {}
@@ -978,18 +985,23 @@ def cmd_setup(
                 print(json.dumps({"status": "error", "message": f"--connection {family}={override_id} not found"}, separators=(",", ":")))
                 sys.exit(1)
         else:
-            active = [c for c in family_conns if c["active"]]
+            active = sorted(
+                [c for c in family_conns if c["active"]],
+                key=lambda c: c.get("succeeded_at") or "",
+                reverse=True,
+            )
             if not active:
                 continue
-            exact = [c for c in active if c.get("schema", "").lower() == family.lower()]
-            if len(exact) == 1:
-                picked = exact[0]
-            elif len(active) == 1:
+            if len(active) == 1:
                 picked = active[0]
             else:
+                # Multiple active connections of the same service — require explicit selection
+                # so customers running parallel QDMs aren't silently routed to the wrong one.
+                # Sorted by succeeded_at so the most recent is first.
                 needs_disambig[family] = [
-                    {"connection_id": c["connection_id"], "schema": c["schema"], "sync_state": c["sync_state"]}
-                    for c in active[:5]
+                    {"connection_id": c["connection_id"], "schema": c["schema"],
+                     "sync_state": c["sync_state"], "succeeded_at": c["succeeded_at"]}
+                    for c in active
                 ]
                 continue
 
@@ -998,7 +1010,7 @@ def cmd_setup(
     if needs_disambig:
         _agent_print(
             {"status": "disambiguate_required", "families": needs_disambig},
-            "Credentials verified. Return to your Claude Code chat to continue setup.",
+            "Multiple active connections found for the same source. Return to your Claude Code chat to continue setup.",
         )
         return EXIT_CONNECTION_DISAMBIGUATE
 

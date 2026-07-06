@@ -135,10 +135,12 @@ On first query, run at least two levels:
 
 If the question is general ("how is email performing?"), default to Level 1 (rates this period vs prior) + Level 2 (top and bottom 5 programs).
 
+If the question is about a specific named program, include a monthly trend from `marketo__email_sends` alongside the flat aggregate only when the results show activity spanning more than 3 months — derive the span from the query results, not a separate pre-check query.
+
 ### 4. Surface anomalies proactively
 On every funnel and email query, scan for:
 - Programs / campaigns with unsubscribe rate > 1% (industry rule of thumb)
-- Bounce rate > 5% (deliverability red flag)
+- Bounce rate exceeding `flag_threshold` computed during the readiness check (stored in session context — do not re-query per message)
 - Funnel stages where conversion rate dropped > 10 percentage points vs prior cohort
 - Cohorts whose median days-to-MQL has slowed > 20% vs prior
 - Templates with high sends but below-median open rate
@@ -147,7 +149,7 @@ On every funnel and email query, scan for:
 Report these as facts. Do not editorialize.
 
 ### 5. Suggest follow-ups that drill deeper, not sideways
-After every answer, suggest 2–3 follow-up questions that go one level deeper into what was just shown.
+After every answer, suggest 2–3 follow-up questions that go one level deeper into what was just shown. If the result set is empty, anchor follow-ups to the absence — suggest an adjacent dimension or broader time range to try instead.
 
 ### 6. Do NOT show SQL in responses
 Run queries behind the scenes. The user only sees results, not SQL.
@@ -165,6 +167,9 @@ If the user asks about a term that doesn't map to a column (e.g. "best performin
 
 ### 10. Disclose the conversion definition
 "Conversion" means different things to different teams. Marketo's idea of conversion is reaching a specific `lead_status` (e.g. `MQL`, `SQL`, `Customer`). If the user asks about conversion, state which `lead_status` value you used as the conversion event, and offer to use a different one.
+
+### 11. Diagnose silent active programs automatically
+If a program has `program_status = 'on'` but zero sends in the last 90 days (or ever), do not just report the absence — automatically run the Program health check query pattern (see Verified Query Patterns) to explain why. Report the results factually: how many campaigns are active vs inactive, which have `status = 'Never Run'` or `status = 'Inactive'`, total sends per campaign, and when each was last updated. Do not apply name-based heuristics to classify campaign types — naming conventions vary per customer.
 
 ## Readiness Check
 
@@ -215,7 +220,50 @@ Note missing tables. Specifically warn:
 - if `marketo__programs` is absent (nurture stream segmentation unavailable).
 - if `marketo__email_sends` is absent (per-send analysis unavailable — fall back to template- and campaign-level rollups).
 
-Close with 2–3 useful starter questions tailored to the available models, then: *"Would you like results visualized as an interactive dashboard?"*
+**Program inventory** — if `marketo__programs` is in `active_models`, run:
+```sql
+SELECT
+  program_type,
+  COUNT(*) AS total_programs,
+  SUM(CASE WHEN program_status = 'on' THEN 1 ELSE 0 END) AS on_programs
+FROM `{PROJECT_ID}.{SCHEMA}.marketo__programs`
+GROUP BY 1
+ORDER BY total_programs DESC
+```
+Include in the readiness output. Shows actual `program_type` values (do not assume documented values `program`, `event`, `webinar`, `nurture` — real instances commonly use `Email`, `Default`, `Engagement`, `EventWithWebinar`) and active program counts. If any type shows a notably high number of `on_programs`, note it and offer to diagnose which programs are actively sending.
+
+**Email baseline** — if `marketo__email_sends` is in `active_models`, run once and store results in context for the session:
+```sql
+WITH daily AS (
+  SELECT
+    DATE(activity_timestamp)                                               AS day,
+    COUNT(*)                                                               AS total_sends,
+    SUM(CASE WHEN was_bounced = true    THEN 1 ELSE 0 END)                 AS bounced_sends,
+    SUM(CASE WHEN is_operational = true THEN 1 ELSE 0 END)                 AS operational_sends
+  FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends`
+  WHERE DATE(activity_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  GROUP BY 1
+)
+SELECT
+  AVG(SAFE_DIVIDE(bounced_sends, total_sends))                                                               AS baseline_mean,
+  STDDEV(SAFE_DIVIDE(bounced_sends, total_sends))                                                            AS baseline_stddev,
+  AVG(SAFE_DIVIDE(bounced_sends, total_sends)) + 2 * STDDEV(SAFE_DIVIDE(bounced_sends, total_sends))        AS flag_threshold,
+  SUM(CASE WHEN day >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN total_sends       ELSE 0 END)         AS total_sends_30d,
+  SUM(CASE WHEN day >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN operational_sends ELSE 0 END)         AS operational_sends_30d,
+  ROUND(SAFE_DIVIDE(
+    SUM(CASE WHEN day >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN operational_sends ELSE 0 END),
+    NULLIF(SUM(CASE WHEN day >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN total_sends ELSE 0 END), 0)
+  ) * 100, 1)                                                                                                AS operational_pct_30d
+FROM daily
+```
+Store `flag_threshold` in context — use it for all anomaly scans this session without re-querying. If `flag_threshold` is unavailable in context (e.g., session resumed after context reset), re-run this query before the first anomaly scan. Report `operational_pct_30d` factually (e.g., "3.2% of sends in the last 30 days are operational emails that bypass unsubscribe").
+
+Close with 2–3 useful starter questions tailored to the available models and data state:
+- Only suggest funnel velocity or stage transition questions if `marketo__lead_history` is in `active_models`.
+- Only suggest nurture/program questions if `marketo__programs` is in `active_models`.
+- If the program inventory shows any type with a high number of `on_programs`, make one starter question about diagnosing which programs are actively sending.
+
+Then ask: *"Would you like results visualized as an interactive dashboard?"*
 
 ## Prerequisites
 
@@ -416,6 +464,7 @@ Compute all derived metrics in SQL. Use `SAFE_DIVIDE` on BigQuery or `NULLIF(...
   ORDER BY programs DESC
   ```
   Present the values and confirm which one(s) the user wants to treat as "nurture" before filtering. Common values include `nurture`, `Engagement`, `Email`, `Event`, `EventWithWebinar`, `Default` — varies per instance.
+- **Unattributed sends:** In aggregate queries grouped by `program_id` or `program_name`, do not filter null rows. If null-program sends account for more than 10% of the result set, surface a note to the user (e.g., "X% of sends have no program attribution — these may be direct campaign sends outside any program"). Do not apply to lead-level lookups.
 - Date filters: prefer `CURRENT_DATE()` for snapshot queries, `DATE_TRUNC` / `DATE_SUB` for cohort analysis.
 - For expensive queries on `marketo__lead_history` (daily snapshots × millions of leads can be very wide), use date filters AND lead filters where possible.
 - Always join `marketo__email_sends` to `marketo__leads` on `lead_id` and `source_relation`.
@@ -441,7 +490,7 @@ Parse the user's question. Identify:
 For depth:
 1. **Overview query** — answer the question at the level asked, with period-over-period
 2. **Drill-down query** — one level deeper (e.g., if asked about open rate, also show top and bottom 5 programs)
-3. **Anomaly scan** — programs with unsub > 1%, bounce > 5%, cohorts with slowing velocity, templates with high sends and low open rate
+3. **Anomaly scan** — use the `flag_threshold` from the session's readiness baseline (already computed — do not re-run); check programs with unsub > 1%, bounce rate above that threshold, cohorts with slowing velocity, templates with high sends and low open rate, and active programs with zero sends in 90 days
 
 ### Step 4: Present Results
 - Scope line: time window, programs/campaigns included, notable exclusions
@@ -510,6 +559,47 @@ For the full payload schema, see [`dashboard-schema.md`](./dashboard-schema.md) 
 ## Verified Query Patterns
 
 > Note: queries assume BigQuery syntax and `model_tier == single_source`. For Snowflake / Databricks, adapt identifier quoting and replace `SAFE_DIVIDE(a, b)` with `a / NULLIF(b, 0)`. Replace `{PROJECT_ID}` and `{SCHEMA}` with resolved values from `resolve marketo`.
+
+### Bounce rate baseline — 90-day rolling mean and standard deviation (computed once at readiness, cached for session)
+
+> This is computed as part of the **Email baseline** query in the Readiness Check — not re-run per query. Use the `flag_threshold` value stored in session context. Only run this standalone if the session resumed without a readiness check.
+
+```sql
+WITH daily AS (
+  SELECT
+    DATE(activity_timestamp) AS day,
+    SAFE_DIVIDE(
+      SUM(CASE WHEN was_bounced = true THEN 1 ELSE 0 END),
+      COUNT(*)
+    ) AS daily_bounce_rate
+  FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends`
+  WHERE DATE(activity_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  GROUP BY 1
+)
+SELECT
+  AVG(daily_bounce_rate)                                  AS baseline_mean,
+  STDDEV(daily_bounce_rate)                               AS baseline_stddev,
+  AVG(daily_bounce_rate) + 2 * STDDEV(daily_bounce_rate) AS flag_threshold
+FROM daily
+```
+Use `flag_threshold` as the anomaly cutoff for both the overall period bounce rate and per-program bounce rates. Self-calibrates to the customer's list quality and send cadence — no hardcoded threshold needed.
+
+### Program health check — diagnose why a program with `program_status = 'on'` has zero sends
+Run this automatically when a program is active but has not sent in the last 90 days (or ever). Replace `<program_id>` with the actual ID from `marketo__programs`.
+```sql
+SELECT
+  c.campaign_name,
+  c.campaign_type,
+  c.status          AS campaign_status,
+  c.is_active,
+  c.count_sends,
+  DATE(c.created_timestamp) AS campaign_created,
+  DATE(c.updated_timestamp) AS campaign_updated
+FROM `{PROJECT_ID}.{SCHEMA}.marketo__campaigns` c
+WHERE c.program_id = <program_id>
+ORDER BY c.campaign_name
+```
+Report the results factually: how many campaigns are active vs inactive, which have `status = 'Never Run'` or `status = 'Inactive'`, total sends per campaign, and when each was last updated. Do not infer campaign type or cause from campaign names — naming conventions vary per customer.
 
 ### Discover lead_status values (run before any funnel query)
 ```sql
@@ -621,7 +711,9 @@ SELECT
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_clicked THEN 1 ELSE 0 END),
                     SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS click_rate_pct,
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_unsubscribed THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 2) AS unsub_rate_pct
+                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 2) AS unsub_rate_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_clicked THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN es.was_opened  THEN 1 ELSE 0 END)) * 100, 1)  AS ctor_pct
 FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends` es
 JOIN `{PROJECT_ID}.{SCHEMA}.marketo__programs` p
   ON es.program_id = p.program_id
@@ -635,6 +727,7 @@ ORDER BY delivered DESC
 Suggested viz: Bar chart — `program_name` vs `open_rate_pct`; secondary line for `unsub_rate_pct`.
 
 ### Best and worst email templates by open rate (last 90 days, min 500 sends)
+
 ```sql
 SELECT
   TRIM(et.email_template_name)                                                  AS template_name,
@@ -646,7 +739,9 @@ SELECT
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_opened THEN 1 ELSE 0 END),
                     SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS open_rate_pct,
   ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_clicked THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS click_rate_pct
+                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS click_rate_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_clicked THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN es.was_opened  THEN 1 ELSE 0 END)) * 100, 1)  AS ctor_pct
 FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends` es
 JOIN `{PROJECT_ID}.{SCHEMA}.marketo__email_templates` et
   ON es.email_template_id = et.email_template_id
@@ -661,26 +756,32 @@ HAVING delivered >= 500
 ORDER BY open_rate_pct DESC
 LIMIT 20
 ```
-Suggested viz: Table — `template_name`, `subject_line`, `open_rate_pct`, `click_rate_pct`; annotate top 5 and bottom 5.
+Suggested viz: Table — `template_name`, `subject_line`, `open_rate_pct`, `ctor_pct`; annotate top 5 and bottom 5.
 
-### Email engagement trend by month (last 12 months)
+### Email engagement trend by month and program type (last 12 months)
 ```sql
 SELECT
-  DATE_TRUNC(DATE(activity_timestamp), MONTH)                                  AS month,
-  SUM(CASE WHEN was_delivered THEN 1 ELSE 0 END)                               AS delivered,
-  SUM(CASE WHEN was_opened    THEN 1 ELSE 0 END)                               AS opens,
-  SUM(CASE WHEN was_clicked   THEN 1 ELSE 0 END)                               AS clicks,
-  SUM(CASE WHEN was_unsubscribed THEN 1 ELSE 0 END)                            AS unsubs,
-  ROUND(SAFE_DIVIDE(SUM(CASE WHEN was_opened    THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS open_rate_pct,
-  ROUND(SAFE_DIVIDE(SUM(CASE WHEN was_clicked   THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS click_rate_pct
-FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends`
-WHERE DATE(activity_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
-GROUP BY 1
-ORDER BY 1
+  DATE_TRUNC(DATE(es.activity_timestamp), MONTH)                               AS month,
+  p.program_type,
+  SUM(CASE WHEN es.was_delivered    THEN 1 ELSE 0 END)                         AS delivered,
+  SUM(CASE WHEN es.was_opened       THEN 1 ELSE 0 END)                         AS opens,
+  SUM(CASE WHEN es.was_clicked      THEN 1 ELSE 0 END)                         AS clicks,
+  SUM(CASE WHEN es.was_unsubscribed THEN 1 ELSE 0 END)                         AS unsubs,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_opened    THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS open_rate_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_clicked   THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 1) AS click_rate_pct,
+  ROUND(SAFE_DIVIDE(SUM(CASE WHEN es.was_unsubscribed THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN es.was_delivered THEN 1 ELSE 0 END)) * 100, 2) AS unsub_rate_pct
+FROM `{PROJECT_ID}.{SCHEMA}.marketo__email_sends` es
+LEFT JOIN `{PROJECT_ID}.{SCHEMA}.marketo__programs` p
+  ON es.program_id = p.program_id
+  AND es.source_relation = p.source_relation
+WHERE DATE(es.activity_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+GROUP BY 1, 2
+ORDER BY 1, delivered DESC
 ```
-Suggested viz: Dual-line chart — `month` on x-axis; `delivered` (volume) and `open_rate_pct` (rate) as lines on separate axes.
+Suggested viz: Stacked bar by `program_type` per `month` for volume; line overlay for blended `open_rate_pct`. Lets the user see whether rate changes are driven by mix shift vs. genuine engagement change.
 
 ### Batch vs trigger campaign performance (last 90 days)
 ```sql
