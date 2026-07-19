@@ -18,6 +18,7 @@ Subcommands:
 
 import base64
 import concurrent.futures
+import configparser
 import datetime
 import threading
 import getpass
@@ -121,6 +122,78 @@ def _profile_path() -> str:
 
 def _creds_path() -> str:
     return os.path.join(_config_dir(), "credentials.json")
+
+
+def _databricks_profile_context() -> Tuple[Optional[str], Optional[str]]:
+    profile = (
+        os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        or os.environ.get("DATABRICKS_PROFILE")
+        or ""
+    ).strip() or None
+    host = os.environ.get("DATABRICKS_HOST", "").strip() or None
+
+    cfg_path = os.path.expanduser(os.environ.get("DATABRICKS_CONFIG_FILE", "~/.databrickscfg"))
+    if not os.path.isfile(cfg_path):
+        return profile, host
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(cfg_path)
+    except Exception:
+        return profile, host
+
+    if not profile:
+        try:
+            sections = [s for s in parser.sections() if s != "__settings__"]
+            profile = sections[0] if len(sections) == 1 else None
+        except Exception:
+            profile = None
+
+    if not host and profile and parser.has_section(profile):
+        try:
+            host = (parser.get(profile, "host", fallback="") or "").strip() or None
+        except Exception:
+            host = None
+
+    return profile, host
+
+
+def _databricks_credential_access_message(raw_msg: str) -> str:
+    r = _databricks_error_remediation(raw_msg)
+    if r:
+        return r["message"]
+    return raw_msg
+
+
+def _databricks_error_remediation(raw_msg: str) -> Optional[dict]:
+    profile, host = _databricks_profile_context()
+    login_cmd = "databricks auth login"
+    if host:
+        login_cmd += f" --host {host}"
+    if profile:
+        login_cmd += f" --profile {profile}"
+
+    msg = raw_msg or ""
+    if "cache: no cached credentials" not in msg:
+        return None
+
+    return {
+        "code": "databricks_cached_credentials_unavailable",
+        "next_action": "verify_shell_auth_then_rerun_outside_sandbox",
+        "verify_shell_auth_command": "databricks auth profiles",
+        "fallback_login_command": login_cmd,
+        "rerun_policy": (
+            "If shell-side Databricks auth is valid, rerun the same Databricks-backed command "
+            "outside the sandbox or with elevated permissions exactly once. If that rerun still "
+            "returns this same remediation code, stop and surface the error instead of retrying again."
+        ),
+        "message": (
+            "Databricks CLI could not access cached credentials in this process. "
+            "If `databricks auth profiles` is valid in your shell, rerun this command "
+            "outside the sandbox or with elevated permissions. "
+            f"If your shell auth is not valid, run `{login_cmd}`."
+        ),
+    }
 
 
 def looks_like_b64_token(s: str) -> bool:
@@ -1298,12 +1371,19 @@ def cmd_check_cli(tool: str) -> int:
         print(info["missing_msg"])
         return EXIT_CLI_MISSING
 
+    probe = None
     try:
-        auth_ok = subprocess.run(info["auth_cmd"], capture_output=True, timeout=20).returncode == 0
+        probe = subprocess.run(info["auth_cmd"], capture_output=True, text=True, timeout=20)
+        auth_ok = probe.returncode == 0
     except Exception:
         auth_ok = False
     if not auth_ok:
-        print(info["unauth_msg"])
+        if tool == "databricks_cli":
+            stderr = (probe.stderr or "").strip() if probe is not None else ""
+            msg = _databricks_credential_access_message(stderr) or info["unauth_msg"]
+            print(msg)
+        else:
+            print(info["unauth_msg"])
         return EXIT_CLI_UNAUTH
 
     print(f"{tool} ready")
@@ -1347,8 +1427,8 @@ def _readiness_query_databricks(catalog: str, schema: str, table: str, timeout: 
 
 def _probe_table_freshness(
     dest_type: str, database: str, schema: str, table: str
-) -> Tuple[str, str, List[dict], Optional[str]]:
-    """Returns (schema, table, rows, error_message)."""
+) -> Tuple[str, str, List[dict], Optional[str], Optional[dict]]:
+    """Returns (schema, table, rows, error_message, remediation)."""
     try:
         if dest_type == "bigquery":
             raw = _readiness_query_bq(database, schema, table)
@@ -1357,9 +1437,9 @@ def _probe_table_freshness(
         elif dest_type == "databricks":
             raw = _readiness_query_databricks(database, schema, table)
         else:
-            return schema, table, [], f"unsupported warehouse: {dest_type}"
+            return schema, table, [], f"unsupported warehouse: {dest_type}", None
         if raw is None:
-            return schema, table, [], "query failed"
+            return schema, table, [], "query failed", None
         rows = []
         for r in raw:
             if isinstance(r, dict):
@@ -1370,9 +1450,13 @@ def _probe_table_freshness(
                 })
             elif isinstance(r, list) and len(r) >= 3:
                 rows.append({"platform": str(r[0]), "latest_date": str(r[1]), "rows": int(r[2] or 0)})
-        return schema, table, rows, None
+        return schema, table, rows, None, None
     except Exception as exc:
-        return schema, table, [], str(exc)
+        msg = str(exc)
+        remediation = _databricks_error_remediation(msg) if dest_type == "databricks" else None
+        if remediation:
+            msg = remediation["message"]
+        return schema, table, [], msg, remediation
 
 
 def cmd_readiness(family_filter: Optional[List[str]] = None) -> int:
@@ -1424,6 +1508,7 @@ def cmd_readiness(family_filter: Optional[List[str]] = None) -> int:
 
     freshness_rows: List[dict] = []
     errors: List[dict] = []
+    remediations: List[dict] = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(probes))) as pool:
         futures = {
@@ -1431,21 +1516,29 @@ def cmd_readiness(family_filter: Optional[List[str]] = None) -> int:
             for schema, table in probes
         }
         for fut in concurrent.futures.as_completed(futures):
-            schema, table, rows, err = fut.result()
+            schema, table, rows, err, remediation = fut.result()
             if err:
                 errors.append({"table": table, "schema": schema, "message": err})
+                if remediation:
+                    remediations.append(remediation)
                 print(f"[asa] warn: readiness probe failed for {schema}.{table}: {err}", file=sys.stderr)
             else:
                 for r in rows:
                     freshness_rows.append({"schema": schema, "table": table, **r})
 
     freshness_rows.sort(key=lambda r: (r["table"], r["platform"]))
+    remediation: Optional[dict] = None
+    if remediations:
+        codes = {r.get("code") for r in remediations}
+        if len(codes) == 1:
+            remediation = remediations[0]
 
     print(json.dumps({
         "status":           "ok",
         "destination":      {"database": database, "warehouse_tool": dest.get("warehouse_tool")},
         "freshness":        freshness_rows,
         "errors":           errors,
+        "remediation":      remediation,
         "qdm_last_ended_at": qdm_last_ended_at,
     }, separators=(",", ":")))
     return EXIT_OK

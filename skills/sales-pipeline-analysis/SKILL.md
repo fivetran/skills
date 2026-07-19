@@ -34,6 +34,17 @@ This skill uses a local profile at `~/.fivetran/skills/sales-pipeline-analysis/p
 to remember warehouse and connector preferences across sessions. First run creates it;
 subsequent runs reuse it.
 
+### Codex Databricks Override
+
+Apply this override before any Databricks re-auth guidance:
+
+1. If a Databricks-backed command or `readiness` response includes a remediation object with `"next_action":"verify_shell_auth_then_rerun_outside_sandbox"`, follow that remediation instead of generic CLI/auth troubleshooting.
+2. Verify shell-side auth with the provided `verify_shell_auth_command`.
+3. If shell-side auth is valid, rerun the same Databricks-backed command outside the sandbox or with elevated permissions exactly once.
+4. If that elevated rerun succeeds, continue normally.
+5. If that elevated rerun returns the same remediation code again, stop and surface the error to the user. Do not loop.
+6. Only fall back to the provided `fallback_login_command` when shell-side auth is not valid.
+
 1. **Validate the local profile.**
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh validate
@@ -190,6 +201,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh readiness
 Parse the JSON response:
 - `freshness[]` — one row per `(table, source_relation)` with `latest_date` and `rows`.
 - `errors[]` — tables that failed (log to stderr).
+  - **Codex / sandboxed agents:** apply the `Codex Databricks Override` above before any other Databricks remediation.
+- `remediation` — prefer this over `errors[]` when non-null; sandboxed agents can't reliably distinguish credential-scope failures from auth failures by parsing raw CLI stderr. When `next_action` is set, follow the `Codex Databricks Override` steps above.
 - `qdm_last_ended_at` — ISO timestamp of when the dbt transformation last ran (already shown in connection table above — do NOT repeat it here).
 - `status: "no_qdm"` — no single_source QDM found; all queries use raw tables.
 
@@ -241,6 +254,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh check-cli <bq|s
 Prints exact install and auth commands if anything is missing.
 
 **Databricks only:** also set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
+
+**Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with `error getting token: cache: no cached credentials`, apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. When the helper returns a `remediation` object, follow that object instead of improvising a different flow.
 
 ## Data Location
 

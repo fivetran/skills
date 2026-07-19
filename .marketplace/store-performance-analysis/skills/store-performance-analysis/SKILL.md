@@ -33,6 +33,17 @@ have an ongoing conversation with the user; maintain context across messages.
 
 This skill uses a local profile at `~/.fivetran/skills/store-performance-analysis/profile.json` to remember the user's warehouse and connector preferences across sessions. First run creates it; subsequent runs reuse it.
 
+### Codex Databricks Override
+
+Apply this override before any Databricks re-auth guidance:
+
+1. If a Databricks-backed command includes a remediation object with `"next_action":"verify_shell_auth_then_rerun_outside_sandbox"`, follow that remediation instead of generic CLI/auth troubleshooting.
+2. Verify shell-side auth with the provided `verify_shell_auth_command`.
+3. If shell-side auth is valid, rerun the same Databricks-backed command outside the sandbox or with elevated permissions exactly once.
+4. If that elevated rerun succeeds, continue normally.
+5. If that elevated rerun returns the same remediation code again, stop and surface the error to the user. Do not loop.
+6. Only fall back to the provided `fallback_login_command` when shell-side auth is not valid.
+
 1. **Validate the local profile.**
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/skills/store-performance-analysis/asa.sh validate
@@ -206,6 +217,7 @@ order in the data is `<date>`. Results don't reflect the last `<n>` days."
 - The matching warehouse CLI installed and authenticated (`bq` / `snow` / `databricks`) — `asa.sh setup` checks this and prints install/auth recipes if missing
 - Read access on the resolved `{DATABASE}.{SCHEMA}`
 - **Databricks only:** set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
+- **Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with `error getting token: cache: no cached credentials`, apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. If you call `asa.sh readiness` directly, prefer its `remediation` field over `errors[]` when non-null, and apply the `Codex Databricks Override` above when `next_action` is set.
 
 ## Metric Definitions
 
@@ -439,7 +451,7 @@ ORDER BY customer_type;
 
 | Error | Response |
 |---|---|
-| Warehouse connection failure | Re-run `bash ${CLAUDE_PLUGIN_ROOT}/skills/store-performance-analysis/asa.sh check-cli <bq\|snowflake_cli\|databricks_cli>` to verify the CLI is installed and authenticated. Surface the printed remediation. |
+| Warehouse connection failure | Re-run `bash ${CLAUDE_PLUGIN_ROOT}/skills/store-performance-analysis/asa.sh check-cli <bq\|snowflake_cli\|databricks_cli>` to verify the CLI is installed and authenticated. Surface the printed remediation. For Databricks in a Codex/sandboxed agent, apply the `Codex Databricks Override` before assuming it's an auth failure. |
 | Permission denied | "Query failed: permission denied on `{DATABASE}.{SCHEMA}`. Verify your role has `USAGE` on the database/schema and `SELECT` on the tables." |
 | Stale data (>7 days) | Inline warning: "Latest order in the data is `<date>` (N days ago). Results don't reflect very recent activity." |
 | Empty result set | "Query returned no rows. Possible causes: filters may be too narrow, or the date range may not contain orders." |
