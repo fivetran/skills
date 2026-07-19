@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "category": "marketing",
     "hero": "How are your ads actually performing?",
-    "description": "Answer ad performance questions across every platform you run — Google Ads, Facebook Ads, Microsoft Ads, LinkedIn Ads, TikTok Ads, and more. Ask about ROAS, CPC, CTR, impressions, conversions, budget pacing, campaign comparisons, and channel mix — using your Fivetran-synced data in BigQuery, Snowflake, or Databricks.\n",
+    "description": "Compare spend, ROAS, CPC, and CTR across your connected ad platforms from Fivetran-synced data, using each platform's reported numbers side by side.\n",
     "tags": [
       "ad spend",
       "ROAS",
@@ -27,19 +27,18 @@
       }
     },
     "capabilities": [
-      { "name": "Cross-Channel Comparison", "description": "Compare ROAS, CPC, and CTR side-by-side across all connected ad platforms" },
+      { "name": "Cross-Channel Comparison", "description": "Compare each platform's reported ROAS, CPC, and CTR side-by-side" },
       { "name": "Campaign Drill-Down", "description": "Break performance down by campaign, ad group, or individual ad" },
       { "name": "Trend Analysis", "description": "Spot week-over-week or month-over-month changes in spend and conversions" },
-      { "name": "Budget Pacing", "description": "Track spend vs budget and flag over- or under-pacing campaigns" },
+      { "name": "Anomaly Detection", "description": "Flag zero-conversion high-spend campaigns, CPC/CTR swings over 20%, and keyword budget concentration" },
       { "name": "Keyword & Search Analysis", "description": "Surface top-performing and wasteful search terms (where available)" }
     ],
     "example_questions": [
       "Which ad platform gave us the best ROAS last month?",
       "Compare Google Ads vs Facebook Ads spend and conversions for Q2",
-      "Which campaigns are underpacing their budget this week?",
       "Show me our top 10 keywords by conversion rate on Google Ads",
-      "How did TikTok Ads CTR trend over the past 90 days?",
-      "Which ad groups have a CPC above $5 but a conversion rate below 1%?"
+      "Which ad groups have a CPC above $5 but a conversion rate below 1%?",
+      "Which campaigns spent over $1K last week with zero conversions?"
     ]
   },
   "freshness": {

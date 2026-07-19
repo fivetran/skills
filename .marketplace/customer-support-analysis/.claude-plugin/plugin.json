@@ -1,6 +1,6 @@
 {
   "name": "customer-support-analysis",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "First reply, resolution time, backlog, SLA, and CSAT analysis for Zendesk",
   "author": {
     "name": "Fivetran"
