@@ -11,8 +11,18 @@ Subcommands:
         [--no-skip]                          # clear all persisted skips
         [--no-schema]                        # clear all persisted schema overrides
         [--refresh] [--skill <id>]
+  discover --warehouse <bq|snowflake_cli|databricks_cli> --database <name>
+           [--location <region>] [--schema <name> ...]
+           [--schema-override KEY=SCHEMA ...] [--skill <id>]
+                                               # warehouse-only setup, no Fivetran API key.
+                                               # 0=ok | 54=schema disambiguate | 53=insufficient
+                                               # connectors | 70/71=CLI missing/unauth
   resolve <family> [--refresh-on-miss]       # prints JSON to stdout
   readiness [FAM ...]                         # parallel data-freshness probe across active_models
+  list-schemas --warehouse <bq|snowflake_cli|databricks_cli> --database <name>
+                                               # cheap metadata-only schema name list,
+                                               # for offering the user a pick-list before
+                                               # the full table scan. 0=ok | 53=none found
   check-cli <bq|snowflake_cli|databricks_cli> # 0=ok | 70=missing | 71=unauth
 """
 
@@ -82,6 +92,66 @@ PACKAGE_TO_FAMILY: Dict[str, str] = {
     "pinterest": "pinterest_ads",
     "twitter": "twitter_ads",
     "snapchat": "snapchat_ads",
+}
+
+# ---------------------------------------------------------------------------
+# `discover` subcommand constants — warehouse-only setup (no Fivetran API key)
+# ---------------------------------------------------------------------------
+# Identifies which family a unified model's `platform`/`source_relation`
+# value refers to. `platform` is a literal per-package slug in the real
+# fivetran/dbt_ad_reporting package (see get_query.sql: `cast('{{ platform }}'
+# ...)`), so it's expected to already match a service's slug or
+# readiness.json display_name once normalized (lowercased, non-alphanumerics
+# stripped) — no alias needed for it in practice.
+#
+# `source_relation`, by contrast, is passed through from each connector's own
+# upstream staging package (`select source_relation, ... from {{ relation }}`
+# in the same macro), so it reflects that package's own naming rather than
+# ad_reporting's slug convention. `linkedin_ad_analytics` and `bing_ads` are
+# the actual Fivetran staging package names for LinkedIn Ads and Microsoft
+# Ads (the latter predating the "Microsoft Advertising" rebrand) — a real,
+# structural divergence, not label drift. This alias table exists for that.
+DISCOVERY_VALUE_ALIASES: Dict[str, str] = {
+    "linkedinadanalytics": "linkedin_ads",
+}
+
+
+def _normalize_label(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _build_discovery_identity_map() -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for grp in _CFG.get("connector_groups", []):
+        for opt in grp.get("options", []):
+            svc = opt["service"]
+            out[_normalize_label(svc)] = svc
+            if opt.get("display_name"):
+                out[_normalize_label(opt["display_name"])] = svc
+    out.update(DISCOVERY_VALUE_ALIASES)
+    return out
+
+
+_DISCOVERY_IDENTITY_TO_FAMILY: Dict[str, str] = _build_discovery_identity_map()
+
+
+def _family_for_label(raw_value: str) -> Optional[str]:
+    return _DISCOVERY_IDENTITY_TO_FAMILY.get(_normalize_label(raw_value))
+
+
+# The unified model queried in the linkage check and the degraded fallback
+# below, and used to test whether a candidate schema is the unified
+# ad_reporting layer.
+DISCOVERY_PRIMARY_UNIFIED_MODEL = "ad_reporting__campaign_report"
+
+# Above this many schemas in one unscoped scan, warn that discovery may be
+# fingerprinting schemas owned by other teams in a shared project.
+BROAD_SCAN_SCHEMA_WARN_THRESHOLD = 15
+
+WAREHOUSE_TOOL_TO_DEST_TYPE: Dict[str, str] = {
+    "bq": "bigquery",
+    "snowflake_cli": "snowflake",
+    "databricks_cli": "databricks",
 }
 
 ACTIVE_SYNC_STATES = {"scheduled", "syncing", "rescheduled"}
@@ -525,9 +595,16 @@ def _agent_print(payload: dict, tty_message: str) -> None:
 # Warehouse query helpers (used by schema probe)
 # ---------------------------------------------------------------------------
 
-def _bq_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List[dict]]:
+def _bq_query(sql: str, timeout: int = 30, raise_on_error: bool = False, max_rows: Optional[int] = None) -> Optional[List[dict]]:
+    cmd = ["bq", "query", "--use_legacy_sql=false", "--format=prettyjson", "--quiet"]
+    if max_rows is not None:
+        # bq's own default is 100 rows — silently truncates wide pulls (e.g. an
+        # INFORMATION_SCHEMA.TABLES scan across several schemas easily exceeds
+        # it). Callers doing bulk listing must pass an explicit ceiling.
+        cmd.append(f"--max_rows={max_rows}")
+    cmd.append(sql)
     r = subprocess.run(
-        ["bq", "query", "--use_legacy_sql=false", "--format=prettyjson", "--quiet", sql],
+        cmd,
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
@@ -682,6 +759,691 @@ def _probe_schema_databricks(
     if isinstance(rows[0], list):
         return [str(r[0]) for r in rows if isinstance(r, list) and r]
     return [str(rows[0])]
+
+
+# ---------------------------------------------------------------------------
+# `discover` subcommand — warehouse-only setup, no Fivetran API key.
+#
+# Schema/dataset names in Fivetran are arbitrary user-chosen strings and do NOT
+# match the connector name (e.g. a Facebook Ads connector may land in a schema
+# called "ads_9108233"). So discovery never matches on schema name. Instead it
+# pulls the full (schema, table) inventory once via INFORMATION_SCHEMA and
+# fingerprints each schema's *table names* against readiness.json's declared
+# required_tables (raw connectors) and required_models (QDM), since Fivetran
+# does standardize table names even though it doesn't standardize schema names.
+# ---------------------------------------------------------------------------
+
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def _validate_identifier(name: str, kind: str) -> None:
+    """Discovery interpolates database/schema names directly into SQL (they're
+    identifiers, not values, so they can't be bind-parameterized). Reject
+    anything outside a safe identifier charset up front instead of letting it
+    reach the warehouse as a broken or misinterpreted query."""
+    if not name or not _SAFE_IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"invalid {kind} {name!r}: only letters, digits, underscore, hyphen, "
+            "and dot are allowed"
+        )
+
+
+def _list_schema_names(dest_type: str, database: str) -> List[str]:
+    """Return just the schema names in a database, without reading table inventory.
+
+    This is deliberately separate from `_list_tables`. Listing schema names is a
+    metadata lookup on all three warehouses, whereas the table scan reads
+    INFORMATION_SCHEMA across every schema and is the expensive part. Discovery
+    uses this to offer the user a pick-list instead of requiring them to recall a
+    schema name up front, and on BigQuery it also sidesteps `--location`, because
+    `bq ls` is not a regional INFORMATION_SCHEMA view.
+    """
+    _validate_identifier(database, "--database")
+    if dest_type == "bigquery":
+        r = subprocess.run(
+            ["bq", "ls", "--max_results=10000", "--format=json", f"--project_id={database}"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip())
+        out = []
+        for entry in json.loads(r.stdout.strip() or "[]"):
+            ref = (entry or {}).get("datasetReference") or {}
+            name = ref.get("datasetId") or (entry or {}).get("id", "").split(":")[-1]
+            if name:
+                out.append(name)
+        return sorted(set(out))
+
+    if dest_type == "snowflake":
+        rows = _snow_query(f"SHOW SCHEMAS IN DATABASE {database}", raise_on_error=True) or []
+    elif dest_type == "databricks":
+        # Backticks are required, not cosmetic: a catalog name containing a
+        # hyphen (e.g. `luke-test`) is a valid Databricks identifier but is
+        # rejected as INVALID_IDENTIFIER when interpolated bare.
+        rows = _databricks_query(f"SHOW SCHEMAS IN `{database}`", raise_on_error=True) or []
+    else:
+        raise ValueError(f"unsupported destination_type for schema listing: {dest_type!r}")
+
+    out = []
+    for r_ in rows:
+        if isinstance(r_, dict):
+            # SHOW SCHEMAS labels the column differently per warehouse.
+            val = (r_.get("name") or r_.get("NAME")
+                   or r_.get("schema_name") or r_.get("databaseName"))
+        elif isinstance(r_, list) and r_:
+            val = r_[0]
+        else:
+            continue
+        if val:
+            out.append(str(val))
+    return sorted(set(out))
+
+
+def cmd_list_schemas(warehouse_tool: str, database: str) -> int:
+    if warehouse_tool not in WAREHOUSE_TOOL_TO_DEST_TYPE:
+        print(f"[asa] unknown --warehouse {warehouse_tool!r}; expected one of "
+              f"{sorted(WAREHOUSE_TOOL_TO_DEST_TYPE)}", file=sys.stderr)
+        return 1
+    dest_type = WAREHOUSE_TOOL_TO_DEST_TYPE[warehouse_tool]
+
+    cli_status = cmd_check_cli(warehouse_tool)
+    if cli_status != EXIT_OK:
+        return cli_status
+
+    try:
+        schemas = _list_schema_names(dest_type, database)
+    except ValueError as exc:
+        print(f"[asa] {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"[asa] could not list schemas in {database!r}: {exc}", file=sys.stderr)
+        return 1
+
+    if not schemas:
+        _agent_print(
+            {"status": "not_found", "database": database, "schemas": [],
+             "message": f"No schemas found in {database!r}. Check the database/project/catalog name."},
+            f"No schemas found in {database}.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    _agent_print(
+        {"status": "ok", "database": database, "schemas": schemas, "count": len(schemas)},
+        f"{len(schemas)} schemas in {database}: {', '.join(schemas)}",
+    )
+    return EXIT_OK
+
+
+def _resolve_scanned_schema(name: str, schema_tables: Dict[str, set]) -> Optional[str]:
+    """Map an operator-supplied schema name onto an actually-scanned schema key.
+
+    Snowflake reports identifiers uppercased, so `--schema-override unified=ad_reporting`
+    would never match the scanned key `AD_REPORTING` under an exact comparison, and the
+    override was rejected even though the schema was plainly present. Try the exact name
+    first, then fall back to a case-insensitive match, and return the scanned spelling so
+    callers index `schema_tables` with a key that exists.
+    """
+    if name in schema_tables:
+        return name
+    lowered = name.lower()
+    for scanned in schema_tables:
+        if scanned.lower() == lowered:
+            return scanned
+    return None
+
+
+def _list_tables_bq(project: str, location: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(project, "--database")
+    region = f"region-{(location or 'us').lower()}"
+    sql = f"SELECT table_schema, table_name FROM `{project}.{region}.INFORMATION_SCHEMA.TABLES`"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s}'" for s in schemas)
+        sql += f" WHERE table_schema IN ({names_sql})"
+    # A handful of schemas can easily hold hundreds of tables combined (e.g. a
+    # single ad-connector raw schema commonly has 50-100+ report tables) —
+    # bq's un-overridden default row cap is 100, well below that.
+    rows = _bq_query(sql, raise_on_error=True, max_rows=100000) or []
+    return [(r.get("table_schema"), r.get("table_name")) for r in rows if r.get("table_schema") and r.get("table_name")]
+
+
+def _list_tables_snowflake(database: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(database, "--database")
+    sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {database}.INFORMATION_SCHEMA.TABLES"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s.upper()}'" for s in schemas)
+        sql += f" WHERE TABLE_SCHEMA IN ({names_sql})"
+    rows = _snow_query(sql, raise_on_error=True) or []
+    out = []
+    for r in rows:
+        if isinstance(r, dict):
+            schema, table = r.get("TABLE_SCHEMA") or r.get("table_schema"), r.get("TABLE_NAME") or r.get("table_name")
+        elif isinstance(r, list) and len(r) >= 2:
+            schema, table = str(r[0]), str(r[1])
+        else:
+            continue
+        if schema and table:
+            out.append((schema, table))
+    return out
+
+
+def _list_tables_databricks(catalog: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(catalog, "--database")
+    sql = f"SELECT table_schema, table_name FROM system.information_schema.tables WHERE table_catalog = '{catalog}'"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s}'" for s in schemas)
+        sql += f" AND table_schema IN ({names_sql})"
+    rows = _databricks_query(sql, raise_on_error=True) or []
+    out = []
+    for r in rows:
+        if isinstance(r, list) and len(r) >= 2:
+            out.append((str(r[0]), str(r[1])))
+    return out
+
+
+def _list_tables(dest_type: str, database: str, location: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    if dest_type == "bigquery":
+        return _list_tables_bq(database, location, schemas)
+    if dest_type == "snowflake":
+        return _list_tables_snowflake(database, schemas)
+    if dest_type == "databricks":
+        return _list_tables_databricks(database, schemas)
+    raise ValueError(f"unsupported destination_type for discovery: {dest_type!r}")
+
+
+def _schema_table_map(pairs: List[Tuple[str, str]], dest_type: str) -> Dict[str, set]:
+    """Build {schema_name: {table_name, ...}}. Snowflake uppercases identifiers by
+    default (mirrors _probe_schema_snowflake's existing uppercasing behavior)."""
+    out: Dict[str, set] = {}
+    for schema, table in pairs:
+        out.setdefault(schema, set()).add(table.upper() if dest_type == "snowflake" else table)
+    return out
+
+
+def _names_present(table_set: set, names: List[str], dest_type: str) -> bool:
+    check = {n.upper() for n in names} if dest_type == "snowflake" else set(names)
+    return check.issubset(table_set)
+
+
+def _names_matched(table_set: set, names: List[str], dest_type: str) -> List[str]:
+    check = [n.upper() if dest_type == "snowflake" else n for n in names]
+    matched_upper = {n for n in check if n in table_set}
+    # Return the caller's original casing for whichever names matched.
+    return [orig for orig, chk in zip(names, check) if chk in matched_upper]
+
+
+def _bq_dataset_location(project: str, dataset: str) -> Optional[str]:
+    """Read a BigQuery dataset's true region, so `_list_tables_bq` queries the
+    right INFORMATION_SCHEMA region view. Probing the wrong region silently
+    returns zero rows, which would otherwise be misread as "nothing found."""
+    try:
+        r = subprocess.run(
+            ["bq", "show", "--format=prettyjson", f"{project}:{dataset}"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if r.returncode != 0:
+            return None
+        info = json.loads(r.stdout)
+        loc = info.get("location")
+        return str(loc) if loc else None
+    except Exception:
+        return None
+
+
+def _linked_families_for_unified(dest_type: str, database: str, unified_schema: str, model: str) -> set:
+    """Return the family keys that actually have data in the unified model —
+    used both to confirm a raw-fingerprinted connector is genuinely linked to
+    the unified layer (a family's raw schema and an unrelated unified schema
+    can both exist in the same database without that family feeding it), and
+    (when no raw schema is found at all) to identify families in the degraded
+    fallback.
+
+    Tries `source_relation` first — its value comes from each connector's own
+    upstream staging package rather than ad_reporting's slug convention, so it
+    can diverge from a service's slug (see DISCOVERY_VALUE_ALIASES) — then
+    `platform`, the ad_reporting-level slug, as a second signal. Unions
+    whatever either column yields; a column that doesn't exist on a given QDM
+    version is skipped rather than treated as fatal. Values from both columns
+    are matched via `_family_for_label`, so a family is recognized regardless
+    of which label style this particular QDM version happens to store."""
+    families: set = set()
+    columns = ("source_relation", "platform")
+    errors: List[Exception] = []
+    for column in columns:
+        sql = (f"SELECT DISTINCT {column} FROM `{database}.{unified_schema}.{model}`"
+               if dest_type == "bigquery" else
+               # Databricks needs each identifier backticked separately so that
+               # hyphenated catalog names survive (see _list_schema_names).
+               f"SELECT DISTINCT {column} FROM `{database}`.`{unified_schema}`.`{model}`"
+               if dest_type == "databricks" else
+               f"SELECT DISTINCT {column} FROM {database}.{unified_schema}.{model}")
+        try:
+            rows = (_bq_query(sql, raise_on_error=True) if dest_type == "bigquery" else
+                    _snow_query(sql, raise_on_error=True) if dest_type == "snowflake" else
+                    _databricks_query(sql, raise_on_error=True)) or []
+        except Exception as exc:
+            # Tolerated only because the *other* column may still work: a given
+            # QDM version may not have both. Every helper raises a bare
+            # RuntimeError carrying raw stderr, so the failure reason can't be
+            # classified here — but a version missing BOTH columns isn't a real
+            # scenario, so both failing means the query itself is broken
+            # (bad identifier, auth, permissions). Swallowing that returns an
+            # empty set, which the caller reports as "no recognizable
+            # platforms" — implying the query ran and returned unrecognized
+            # data when it never ran at all. Propagate instead, so the caller's
+            # accurate "linkage lookup failed (<error>)" branch is reachable.
+            errors.append(exc)
+            continue
+        for r in rows:
+            if isinstance(r, dict):
+                value = r.get(column) or r.get(column.upper())
+            elif isinstance(r, list) and r:
+                value = r[0]
+            else:
+                continue
+            if not value:
+                continue
+            family = _family_for_label(str(value))
+            if family and family in REQUIRED_POOL:
+                families.add(family)
+    if len(errors) == len(columns):
+        raise errors[-1]
+    return families
+
+
+def cmd_discover(
+    warehouse_tool: str,
+    database: str,
+    location: Optional[str],
+    schema_hints: List[str],
+    schema_overrides: Dict[str, str],
+    skill_id: str,
+) -> int:
+    if warehouse_tool not in WAREHOUSE_TOOL_TO_DEST_TYPE:
+        print(f"[asa] unknown --warehouse {warehouse_tool!r}; expected one of "
+              f"{sorted(WAREHOUSE_TOOL_TO_DEST_TYPE)}", file=sys.stderr)
+        return 1
+    dest_type = WAREHOUSE_TOOL_TO_DEST_TYPE[warehouse_tool]
+
+    cli_status = cmd_check_cli(warehouse_tool)
+    if cli_status != EXIT_OK:
+        return cli_status
+
+    # BigQuery region must be known, never assumed. INFORMATION_SCHEMA is a
+    # per-region view, so scanning the wrong region returns zero rows that look
+    # exactly like "this project has no tables". Silently defaulting to US made
+    # every non-US project report nothing found with no usable error.
+    if dest_type == "bigquery" and not location:
+        if schema_hints:
+            location = _bq_dataset_location(database, schema_hints[0])
+        if not location:
+            print(
+                "[asa] BigQuery region could not be determined. "
+                "Pass --location <region> (e.g. US, EU, us-east1) and retry. "
+                "A scan against the wrong region returns zero rows that are "
+                "indistinguishable from an empty project, so discovery will not guess.",
+                file=sys.stderr,
+            )
+            return 1
+    resolved_location = location or "US"
+
+    try:
+        pairs = _list_tables(dest_type, database, resolved_location, schema_hints or None)
+    except RuntimeError as exc:
+        print(f"[asa] discovery query failed: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"[asa] {exc}", file=sys.stderr)
+        return 1
+
+    schema_tables = _schema_table_map(pairs, dest_type)
+    if not schema_tables:
+        _agent_print(
+            {
+                "status": "not_found",
+                "message": "No tables found in the given database/schema(s). Check the "
+                            "database name and schema hints, or fall back to the "
+                            "API-key setup.",
+            },
+            "No tables found. Return to your Claude Code chat to continue.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    # An unscoped scan on a shared project sees every team's schemas, so a
+    # fingerprint can match a connector that belongs to somebody else. A
+    # stderr-only warning is invisible to an agent that only inspects the
+    # JSON payload and exit code, so it is also carried into the result
+    # payload as broad_scan_warning.
+    broad_scan_warning: Optional[str] = None
+    if not schema_hints and len(schema_tables) > BROAD_SCAN_SCHEMA_WARN_THRESHOLD:
+        broad_scan_warning = (
+            f"Found {len(schema_tables)} schemas in {database!r} and no --schema "
+            "hints were given. On a shared project this can fingerprint schemas "
+            "belonging to unrelated teams. Pass --schema <name> to narrow the scan "
+            "if the result below looks wrong."
+        )
+        print(f"[asa] warn: {broad_scan_warning}", file=sys.stderr)
+
+    # An override key that is neither "unified" nor a known family matches nothing
+    # and does nothing, so a mistyped family name used to be accepted in silence.
+    unknown_override_keys = sorted(
+        k for k in schema_overrides if k != "unified" and k not in REQUIRED_POOL
+    )
+    if unknown_override_keys:
+        print(
+            f"[asa] warn: ignoring unrecognized --schema-override key(s) "
+            f"{', '.join(repr(k) for k in unknown_override_keys)}. Expected 'unified' or "
+            f"one of: {', '.join(sorted(REQUIRED_POOL))}.",
+            file=sys.stderr,
+        )
+
+    # --- 1. Unified/multisource QDM schema -----------------------------------
+    unified_candidates: List[str] = []
+    quickstart = _CFG.get("quickstart_models") or []
+    unified_required: List[str] = []
+    unified_recommended: List[str] = []
+    if quickstart:
+        # ad-performance-analysis declares one multisource quickstart package.
+        qm = quickstart[0]
+        unified_required    = [m["name"] for m in qm.get("required_models", [])]
+        unified_recommended = [m["name"] for m in qm.get("recommended_models", [])]
+        # Mirrors the raw-connector loop below: an empty required list would
+        # make _names_present trivially true for every schema, matching all
+        # of them rather than none.
+        if unified_required:
+            for schema, tables in schema_tables.items():
+                if _names_present(tables, unified_required, dest_type):
+                    unified_candidates.append(schema)
+
+    if "unified" in schema_overrides:
+        unified_schema = schema_overrides["unified"]
+        try:
+            _validate_identifier(unified_schema, "--schema-override unified")
+        except ValueError as exc:
+            print(f"[asa] {exc}", file=sys.stderr)
+            return 1
+        resolved = _resolve_scanned_schema(unified_schema, schema_tables)
+        if resolved is None:
+            print(
+                f"[asa] --schema-override unified={unified_schema!r} was not among the "
+                f"scanned schemas ({', '.join(sorted(schema_tables)) or 'none'}). "
+                "Add it via --schema and re-run.",
+                file=sys.stderr,
+            )
+            return 1
+        unified_schema = resolved
+    elif len(unified_candidates) > 1:
+        candidates = sorted(unified_candidates)
+        _agent_print(
+            {
+                "status": "disambiguate_required",
+                "schemas": {"multisource_ad_reporting": candidates},
+                "hint": f"Re-run with: --schema-override unified={candidates[0]}",
+            },
+            f"Multiple unified schemas found: {', '.join(candidates)}. "
+            "Re-run with --schema-override unified=<name> to pick one.",
+        )
+        return EXIT_SCHEMA_DISAMBIGUATE
+    elif len(unified_candidates) == 1:
+        unified_schema = unified_candidates[0]
+    else:
+        unified_schema = None
+
+    active_models: List[str] = []
+    if unified_schema:
+        active_models = _names_matched(schema_tables[unified_schema], unified_required + unified_recommended, dest_type)
+
+    # Which families the unified schema actually contains data for — a family's
+    # raw schema and an unrelated unified schema can both exist in the same
+    # database without that family feeding it, so presence of *a* unified
+    # schema is not by itself evidence that a given connector is linked to it.
+    # When this lookup fails, linked_families stays empty and every connector
+    # silently downgrades to model_tier "raw" with unified_schema null, which
+    # looks identical to a warehouse that genuinely has no QDM layer. A stderr
+    # warning alone was invisible to the agent, so the failure is also carried
+    # into the result payload as linkage_warning.
+    linked_families: set = set()
+    linkage_warning: Optional[str] = None
+    if unified_schema:
+        model = DISCOVERY_PRIMARY_UNIFIED_MODEL if DISCOVERY_PRIMARY_UNIFIED_MODEL in active_models else (active_models[0] if active_models else None)
+        if not model:
+            linkage_warning = (
+                f"Unified schema {unified_schema!r} matched, but none of its expected models "
+                "were found, so connector-to-QDM linkage could not be checked. Every connector "
+                "below is reported as raw tier even if a QDM layer exists."
+            )
+        else:
+            try:
+                linked_families = _linked_families_for_unified(dest_type, database, unified_schema, model)
+            except Exception as exc:
+                linkage_warning = (
+                    f"Unified linkage lookup against {unified_schema}.{model} failed ({exc}). "
+                    "Every connector below is reported as raw tier and unified_schema is null, "
+                    "which is indistinguishable from having no QDM layer at all. Re-run with "
+                    "--schema-override unified=<name> or check read access on that model before "
+                    "trusting the tiers below."
+                )
+            else:
+                if not linked_families:
+                    linkage_warning = (
+                        f"Unified schema {unified_schema!r} was found, but {model} reported no "
+                        "recognizable platforms, so no connector could be linked to it. Every "
+                        "connector below is reported as raw tier."
+                    )
+        if linkage_warning:
+            print(f"[asa] warn: {linkage_warning}", file=sys.stderr)
+
+    # --- 2. Raw connector identity (source of truth for the family key) ------
+    # A schema whose tables contain a service's required_tables IS that
+    # connector — the matching `service` value becomes the profile family key
+    # directly (the same key cmd_setup writes, keyed off connection.service).
+    raw_matches: Dict[str, List[str]] = {}  # family -> candidate schemas
+    for grp in _CFG.get("connector_groups", []):
+        for opt in grp.get("options", []):
+            service = opt["service"]
+            required = [t["name"] for t in opt.get("required_tables", [])]
+            if not required:
+                continue
+            matches = [s for s, tables in schema_tables.items() if _names_present(tables, required, dest_type)]
+            if matches:
+                raw_matches[service] = matches
+
+    needs_raw_disambig = {
+        fam: sorted(schemas) for fam, schemas in raw_matches.items()
+        if len(schemas) > 1 and fam not in schema_overrides
+    }
+    if needs_raw_disambig:
+        _agent_print(
+            {
+                "status": "disambiguate_required",
+                "schemas": needs_raw_disambig,
+                "hint": "Re-run with: " + " ".join(
+                    f"--schema-override {fam}={cands[0]}"
+                    for fam, cands in sorted(needs_raw_disambig.items())
+                ),
+            },
+            "Multiple schemas found: " + "; ".join(
+                f"{fam}: {', '.join(cands)}" for fam, cands in sorted(needs_raw_disambig.items())
+            ) + ". Re-run with --schema-override <family>=<name> for each.",
+        )
+        return EXIT_SCHEMA_DISAMBIGUATE
+
+    # A per-family override used to be charset-checked only, unlike the unified
+    # override which was also confirmed against the scan. A typo was therefore
+    # accepted here and only surfaced much later as an opaque warehouse error.
+    def _checked_override(family: str, raw_value: str) -> Optional[str]:
+        try:
+            _validate_identifier(raw_value, f"--schema-override {family}")
+        except ValueError as exc:
+            print(f"[asa] {exc}", file=sys.stderr)
+            raise
+        resolved = _resolve_scanned_schema(raw_value, schema_tables)
+        if resolved is None:
+            print(
+                f"[asa] --schema-override {family}={raw_value!r} was not among the "
+                f"scanned schemas ({', '.join(sorted(schema_tables)) or 'none'}). "
+                "Add it via --schema and re-run.",
+                file=sys.stderr,
+            )
+            raise ValueError(f"unscanned schema for {family}")
+        return resolved
+
+    connectors: Dict[str, dict] = {}
+    for family, schemas in raw_matches.items():
+        override = schema_overrides.get(family)
+        if override:
+            try:
+                override = _checked_override(family, override)
+            except ValueError:
+                return 1
+        raw_schema = override or schemas[0]
+        tier = "multisource" if family in linked_families else "raw"
+        connectors[family] = {
+            "connection_id":        f"manual:{family}",
+            "raw_schema":           raw_schema,
+            "model_tier":           tier,
+            "unified_schema":       unified_schema if tier == "multisource" else None,
+            "single_source_schema": None,
+            "active_models":        active_models if tier == "multisource" else [],
+            "excluded_models":      [],
+            "last_ended_at":        None,
+            "qdm_functional":       True,
+        }
+
+    # --- 3. Degraded fallback: QDM linked, no raw schema fingerprinted -------
+    # Family identity here comes from the unified model's platform values rather
+    # than a raw fingerprint, for any family the unified layer feeds but whose
+    # raw tables were not found.
+    #
+    # This used to be gated on `not connectors`, i.e. it only ran when zero raw
+    # schemas matched anywhere. On a warehouse where some families kept their raw
+    # schemas and others did not, the ones without were dropped from the profile
+    # entirely: absent from connectors, absent from raw_schema_placeholders, and
+    # not counted toward min_required, with nothing printed. Now every linked
+    # family that raw fingerprinting missed is filled in, whatever the others did.
+    #
+    # An operator-supplied --schema-override for such a family is also honoured
+    # here. warehouse-discovery.md documents exactly that recovery step, but the
+    # override was only ever read in the raw_matches loop above, and a family
+    # reaching this block is by definition not in raw_matches, so the value the
+    # operator typed was silently discarded.
+    if unified_schema:
+        for family in sorted(linked_families):
+            if family not in REQUIRED_POOL or family in connectors:
+                continue
+            override = schema_overrides.get(family)
+            resolved_override: Optional[str] = None
+            if override:
+                try:
+                    resolved_override = _checked_override(family, override)
+                except ValueError:
+                    return 1
+            connectors[family] = {
+                "connection_id":        f"manual:{family}",
+                "raw_schema":           resolved_override or unified_schema,
+                "model_tier":           "multisource",
+                "unified_schema":       unified_schema,
+                "single_source_schema": None,
+                "active_models":        active_models,
+                "excluded_models":      [],
+                "last_ended_at":        None,
+                "qdm_functional":       True,
+                "raw_schema_is_placeholder": resolved_override is None,
+            }
+
+    min_required = SKILL_MIN_REQUIRED.get(skill_id, 1)
+    found = sorted(connectors.keys())
+    if len(found) < min_required:
+        _agent_print(
+            {
+                "status": "insufficient_connectors",
+                "required_pool": sorted(REQUIRED_POOL),
+                "found": found,
+                "min_required_count": min_required,
+            },
+            "No supported ad connectors found. Return to your Claude Code chat for details.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    plugin_path = os.path.join(script_dir, "..", ".claude-plugin", "plugin.json")
+    skill_version = "0.1.0"
+    try:
+        with open(plugin_path, "r", encoding="utf-8") as f:
+            pdata = json.load(f)
+        v = pdata.get("version")
+        if isinstance(v, str) and v:
+            skill_version = v
+    except Exception:
+        pass
+
+    profile = {
+        "config_version": PROFILE_VERSION,
+        "install_id":    uuid.uuid4().hex,
+        "discovered_at": _now_utc(),
+        "skill":         {"id": skill_id, "version": skill_version},
+        "destination":   {
+            "destination_id":   "manual",
+            "destination_type": dest_type,
+            "warehouse_tool":   warehouse_tool,
+            "database":         database,
+            "location":         resolved_location,
+        },
+        "skipped_families": [],
+        "schema_overrides": dict(schema_overrides),
+        "connectors": connectors,
+        "setup_method": "warehouse_discovery",
+        "discovery_inputs": {
+            "warehouse_tool": warehouse_tool,
+            "database":       database,
+            "location":       resolved_location,
+            "schema_hints":   list(schema_hints),
+        },
+    }
+    _write_profile(profile)
+
+    placeholder_families = sorted(f for f, e in connectors.items() if e.get("raw_schema_is_placeholder"))
+    payload = {
+        "status":       "ok",
+        "profile_path": _profile_path(),
+        "destination":  profile["destination"],
+        "connections": [
+            {"family": f, "connection_id": e["connection_id"], "schema": e["raw_schema"], "model_tier": e["model_tier"]}
+            for f, e in sorted(connectors.items())
+        ],
+        "multi_source_qdms": (
+            [{
+                "package":         "ad_reporting",
+                "schema":          unified_schema,
+                "linked_families": sorted(f for f, e in connectors.items() if e["model_tier"] == "multisource"),
+                "active_models":   active_models,
+                "excluded_models": [],
+                "last_ended_at":   None,
+                "qdm_functional":  True,
+            }] if unified_schema else []
+        ),
+        "single_source_qdms": [],
+        "raw_schema_placeholders": placeholder_families,
+    }
+    # Carried in the payload, not just stderr: a failed linkage check makes every
+    # connector look raw-tier, which the agent cannot otherwise distinguish from a
+    # warehouse that genuinely has no QDM layer.
+    if linkage_warning:
+        payload["linkage_warning"] = linkage_warning
+    if broad_scan_warning:
+        payload["broad_scan_warning"] = broad_scan_warning
+    if unknown_override_keys:
+        payload["ignored_schema_override_keys"] = unknown_override_keys
+    _agent_print(
+        payload,
+        "Warehouse discovery complete. Return to your Claude Code chat to continue.",
+    )
+    return EXIT_OK
 
 
 # ---------------------------------------------------------------------------
@@ -1283,16 +2045,32 @@ def cmd_resolve(family: str, refresh_on_miss: bool) -> int:
         print("[asa] profile invalid — re-run setup", file=sys.stderr)
         return EXIT_PROFILE_INVALID
 
-    if refresh_on_miss and _resolve_credentials():
-        dest_id  = raw.get("destination", {}).get("destination_id")
+    if refresh_on_miss:
         skill_id = raw.get("skill", {}).get("id", "ad-performance-analysis")
-        cmd_setup(
-            destination_id_override=dest_id,
-            connection_overrides={},
-            skill_id=skill_id,
-            refresh=True,
-        )
-        raw = _read_profile() or raw
+        if raw.get("setup_method") == "warehouse_discovery":
+            # Manual profiles have no Fivetran API credentials — never prompt for
+            # one on refresh. Re-run the same warehouse probe that built the
+            # profile, using its stored discovery inputs.
+            inputs = raw.get("discovery_inputs") or {}
+            if inputs.get("warehouse_tool") and inputs.get("database"):
+                cmd_discover(
+                    warehouse_tool=inputs["warehouse_tool"],
+                    database=inputs["database"],
+                    location=inputs.get("location"),
+                    schema_hints=inputs.get("schema_hints") or [],
+                    schema_overrides=raw.get("schema_overrides") or {},
+                    skill_id=skill_id,
+                )
+                raw = _read_profile() or raw
+        elif _resolve_credentials():
+            dest_id = raw.get("destination", {}).get("destination_id")
+            cmd_setup(
+                destination_id_override=dest_id,
+                connection_overrides={},
+                skill_id=skill_id,
+                refresh=True,
+            )
+            raw = _read_profile() or raw
 
     skipped = raw.get("skipped_families") or []
     if family in skipped:
@@ -1551,7 +2329,7 @@ def cmd_readiness(family_filter: Optional[List[str]] = None) -> int:
 def main() -> int:
     args = sys.argv[1:]
     if not args:
-        print("usage: asa.py <validate|setup|resolve|check-cli> [args...]", file=sys.stderr)
+        print("usage: asa.py <validate|setup|discover|list-schemas|resolve|check-cli> [args...]", file=sys.stderr)
         return 1
 
     subcmd, rest = args[0], args[1:]
@@ -1601,6 +2379,61 @@ def main() -> int:
                 print(f"[asa] unknown argument: {arg!r}", file=sys.stderr)
                 return 1
         return cmd_setup(destination_id, connection_overrides, skill_id, refresh, skip_families, clear_skip, schema_overrides_arg or None, clear_schema_overrides)
+
+    if subcmd == "list-schemas":
+        ls_warehouse: Optional[str] = None
+        ls_database:  Optional[str] = None
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--warehouse" and i + 1 < len(rest):
+                ls_warehouse = rest[i + 1]; i += 2
+            elif rest[i] == "--database" and i + 1 < len(rest):
+                ls_database = rest[i + 1]; i += 2
+            else:
+                print(f"[asa] unknown argument: {rest[i]!r}", file=sys.stderr)
+                return 1
+        if not ls_warehouse or not ls_database:
+            print("usage: asa.py list-schemas --warehouse <bq|snowflake_cli|databricks_cli> "
+                  "--database <project|database|catalog>", file=sys.stderr)
+            return 1
+        return cmd_list_schemas(ls_warehouse, ls_database)
+
+    if subcmd == "discover":
+        warehouse_tool: Optional[str] = None
+        database: Optional[str] = None
+        location: Optional[str] = None
+        schema_hints: List[str] = []
+        schema_overrides_disc: Dict[str, str] = {}
+        skill_id = "ad-performance-analysis"
+        i = 0
+        while i < len(rest):
+            arg = rest[i]
+            if arg == "--warehouse" and i + 1 < len(rest):
+                warehouse_tool = rest[i + 1]; i += 2
+            elif arg == "--database" and i + 1 < len(rest):
+                database = rest[i + 1]; i += 2
+            elif arg == "--location" and i + 1 < len(rest):
+                location = rest[i + 1]; i += 2
+            elif arg == "--schema" and i + 1 < len(rest):
+                schema_hints.append(rest[i + 1]); i += 2
+            elif arg == "--schema-override" and i + 1 < len(rest):
+                pair = rest[i + 1]
+                if "=" not in pair:
+                    print(f"[asa] --schema-override requires KEY=SCHEMA_NAME, got: {pair!r}", file=sys.stderr)
+                    return 1
+                key, sname = pair.split("=", 1)
+                schema_overrides_disc[key.strip()] = sname.strip(); i += 2
+            elif arg == "--skill" and i + 1 < len(rest):
+                skill_id = rest[i + 1]; i += 2
+            else:
+                print(f"[asa] unknown argument: {arg!r}", file=sys.stderr)
+                return 1
+        if not warehouse_tool or not database:
+            print("usage: asa.py discover --warehouse <bq|snowflake_cli|databricks_cli> --database <name> "
+                  "[--location <region>] [--schema <name> ...] [--schema-override KEY=SCHEMA ...] [--skill <id>]",
+                  file=sys.stderr)
+            return 1
+        return cmd_discover(warehouse_tool, database, location, schema_hints, schema_overrides_disc, skill_id)
 
     if subcmd == "resolve":
         if not rest:

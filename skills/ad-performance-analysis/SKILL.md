@@ -45,7 +45,30 @@ Apply this override before any Databricks re-auth guidance:
    ```
    Exit codes: `0` ready · `60` missing (run setup below) · `61` invalid/secret detected (run setup below) · `62` credentials missing (run setup below).
 
-2. **First-run setup** (only when validate exits `60`, `61`, or `62`).
+2. **First-run setup** (only when validate exits `60`, `61`, or `62`). Ask the user first — this is a discrete two-option decision, not open-ended clarification, so **call a structured multiple-choice question tool directly** if your harness provides one (e.g. Claude Code's `AskUserQuestion`); do not downgrade it to plain chat prose just because it could also be phrased conversationally. Only fall back to a plain-text question if no such tool exists in your harness.
+
+   - question: "Do you know which warehouse your Fivetran data lands in (BigQuery, Snowflake, or Databricks)?"
+   - option 1 — label "I know": go to **Step 2a (warehouse-only setup)** below. Description: "Set up the skill here in the chat."
+   - option 2 — label "I don't know": go to **Step 2b (Fivetran API key setup)** below. Description: "Set up using a Fivetran API key and script."
+
+   **Do not ask whether they know their schema or dataset names.** Only the warehouse type and the database/project/catalog name are required, and schema names are discoverable from the warehouse itself (Step 2a lists them). Gating the branch on schema names pushes users who could have used the warehouse path into the API-key path for no reason.
+
+### Step 2a: Warehouse-only setup (`discover`)
+
+No secret is involved here — `bq`/`snow`/`databricks` are already in this skill's allowed tools — so run this **in this chat session**, not a separate terminal.
+
+Ask only for the warehouse type and the database/project/catalog name. Do **not** ask the user to recall schema names. If they are unsure of the database name too, help them find it with their warehouse CLI (e.g. `gcloud projects list` for BigQuery, `snow connection list` for Snowflake) before considering Step 2b.
+
+Then list the schemas and let the user pick, instead of asking them to remember one:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh list-schemas \
+  --warehouse <bq|snowflake_cli|databricks_cli> --database <name> 2>&1; echo "EXIT:$?"
+```
+This is a metadata-only lookup on all three warehouses, so it is cheap and reads no table inventory. Show the returned names and ask which look relevant. Recognising a name in a list is far easier than recalling it, and passing the chosen ones as `--schema` scopes the table scan, which is the expensive part. If the user cannot tell which to pick, run `discover` without `--schema` and let fingerprinting decide.
+
+For the full walkthrough — running `discover`, handling its exit codes, and the schema-name caveat — read [`warehouse-discovery.md`](./warehouse-discovery.md) in this skill's directory. Read it on demand now, since the user opted into this path.
+
+### Step 2b: Fivetran API key setup (original flow)
 
    **Do NOT ask for credentials in chat and do NOT invoke setup with `FIVETRAN_API_KEY=...` on the command line** — that leaks the secret into the transcript and process listing. Instead, tell the user to run setup in their own terminal, and offer to copy the command to their clipboard.
 

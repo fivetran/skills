@@ -70,7 +70,7 @@
         {
           "service": "bingads",
           "display_name": "Microsoft Ads",
-          "required_tables": [{ "name": "ad_performance_report" }, { "name": "campaign_performance_report" }]
+          "required_tables": [{ "name": "ad_performance_daily_report" }, { "name": "campaign_performance_daily_report" }]
         },
         {
           "service": "linkedin_ads",
