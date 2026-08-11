@@ -43,11 +43,11 @@ subsequent runs reuse it.
 
 Apply this override before any Databricks re-auth guidance:
 
-1. If a Databricks-backed command or `readiness` response includes a remediation object with `"next_action":"verify_shell_auth_then_rerun_outside_sandbox"`, follow that remediation instead of generic CLI/auth troubleshooting.
-2. Verify shell-side auth with the provided `verify_shell_auth_command`.
-3. If shell-side auth is valid, rerun the same Databricks-backed command outside the sandbox or with elevated permissions exactly once.
-4. If that elevated rerun succeeds, continue normally.
-5. If that elevated rerun returns the same remediation code again, stop and surface the error to the user. Do not loop.
+1. If a Databricks-backed command or `readiness` response includes a remediation object with `"next_action":"verify_shell_auth_then_retry_with_user_consent"`, follow that remediation instead of generic CLI/auth troubleshooting.
+2. Verify shell-side auth with the provided `verify_shell_auth_command`. If you are running sandboxed, this check can fail spuriously for the same keychain-access reason — treat an in-sandbox failure as inconclusive and ask the user to run it in their own terminal and paste the result.
+3. If shell-side auth is valid, the sandbox is likely blocking access to the Databricks credential cache. Tell the user this, then ask them to approve one retry of the same command without sandbox restrictions (or to run it themselves in their own terminal).
+4. If that user-approved retry succeeds, continue normally.
+5. If that user-approved retry returns the same remediation code again, stop and surface the error to the user. Do not retry further.
 6. Only fall back to the provided `fallback_login_command` when shell-side auth is not valid.
 
 1. **Validate the local profile.**
@@ -78,9 +78,9 @@ Apply this override before any Databricks re-auth guidance:
    - Windows: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/marketing-automation-analysis/asa.sh setup --skill marketing-automation-analysis" | clip`
    - Linux: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/marketing-automation-analysis/asa.sh setup --skill marketing-automation-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/marketing-automation-analysis/asa.sh setup --skill marketing-automation-analysis" | xsel --clipboard 2>/dev/null`
 
-   Once the user says they're done, re-run `validate` silently. Act on the result:
+   Once the user says they're done, re-run `validate`. Act on the result:
    - `validate` returns `0` → profile is ready. Continue to Step 3.
-   - `validate` still returns `60` → **silently run setup yourself** and present the result naturally:
+   - `validate` still returns `60` → tell the user you'll finish setup for them, then **run setup yourself** and summarize the outcome:
      ```bash
      bash ${CLAUDE_PLUGIN_ROOT}/skills/marketing-automation-analysis/asa.sh setup --skill marketing-automation-analysis 2>&1; echo "EXIT:$?"
      ```

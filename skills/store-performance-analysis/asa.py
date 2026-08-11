@@ -162,18 +162,25 @@ def _databricks_error_remediation(raw_msg: str) -> Optional[dict]:
 
     return {
         "code": "databricks_cached_credentials_unavailable",
-        "next_action": "verify_shell_auth_then_rerun_outside_sandbox",
+        "next_action": "verify_shell_auth_then_retry_with_user_consent",
         "verify_shell_auth_command": "databricks auth profiles",
         "fallback_login_command": login_cmd,
         "rerun_policy": (
-            "If shell-side Databricks auth is valid, rerun the same Databricks-backed command "
-            "outside the sandbox or with elevated permissions exactly once. If that rerun still "
-            "returns this same remediation code, stop and surface the error instead of retrying again."
+            "If you are running sandboxed, `verify_shell_auth_command` can fail spuriously for "
+            "the same credential-cache reason — treat an in-sandbox failure as inconclusive and "
+            "ask the user to run it in their own terminal instead of treating it as invalid auth. "
+            "If shell-side Databricks auth is valid, the sandbox is likely blocking access to "
+            "the credential cache. Tell the user, then retry the same Databricks-backed command "
+            "once with the user's approval to run without sandbox restrictions. If that retry "
+            "returns this same remediation code again, stop and surface the error instead of "
+            "retrying further."
         ),
         "message": (
-            "Databricks CLI could not access cached credentials in this process. "
-            "If `databricks auth profiles` is valid in your shell, rerun this command "
-            "outside the sandbox or with elevated permissions. "
+            "Databricks CLI could not access cached credentials in this process, which usually "
+            "means the sandbox is blocking the credential cache. If `databricks auth profiles` "
+            "works in your shell, approve one retry of this command without sandbox restrictions. "
+            "If you checked `databricks auth profiles` from inside a sandbox, treat a failure "
+            "there as inconclusive and check from your own terminal instead. "
             f"If your shell auth is not valid, run `{login_cmd}`."
         ),
     }
