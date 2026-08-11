@@ -255,7 +255,7 @@ Prints exact install and auth commands if anything is missing.
 
 **Databricks only:** also set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
 
-**Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with `error getting token: cache: no cached credentials`, apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. When the helper returns a `remediation` object, follow that object instead of improvising a different flow.
+**Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with a token error containing `no cached credentials` (e.g. `error getting token: cache: no cached credentials`, or the reworded CLI v1.3+ `cache: databricks OAuth is not configured for this host. no cached credentials`), apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. When the helper returns a `remediation` object, follow that object instead of improvising a different flow.
 
 ## Data Location
 

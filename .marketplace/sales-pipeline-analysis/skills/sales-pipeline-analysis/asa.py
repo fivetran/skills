@@ -160,7 +160,10 @@ def _databricks_error_remediation(raw_msg: str) -> Optional[dict]:
         login_cmd += f" --profile {profile}"
 
     msg = raw_msg or ""
-    if "cache: no cached credentials" not in msg:
+    # Match loosely: CLI v1.3+ reworded the error to
+    # "cache: databricks OAuth is not configured for this host. no cached credentials",
+    # which no longer contains the original "cache: no cached credentials" substring.
+    if "no cached credentials" not in msg:
         return None
 
     return {

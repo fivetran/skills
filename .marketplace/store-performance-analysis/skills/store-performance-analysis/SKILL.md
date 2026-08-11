@@ -217,7 +217,7 @@ order in the data is `<date>`. Results don't reflect the last `<n>` days."
 - The matching warehouse CLI installed and authenticated (`bq` / `snow` / `databricks`) — `asa.sh setup` checks this and prints install/auth recipes if missing
 - Read access on the resolved `{DATABASE}.{SCHEMA}`
 - **Databricks only:** set `DATABRICKS_WAREHOUSE_ID` to the id of a running SQL warehouse in your workspace. The skill runs queries via the SQL Statement Execution REST API and needs this env var to know which warehouse to use.
-- **Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with `error getting token: cache: no cached credentials`, apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. If you call `asa.sh readiness` directly, prefer its `remediation` field over `errors[]` when non-null, and apply the `Codex Databricks Override` above when `next_action` is set.
+- **Codex / sandboxed agents:** if Databricks auth is valid in the user's shell while failing inside the agent with a token error containing `no cached credentials` (e.g. `error getting token: cache: no cached credentials`, or the reworded CLI v1.3+ `cache: databricks OAuth is not configured for this host. no cached credentials`), apply the `Codex Databricks Override` above. Do not fall back to generic Databricks login instructions unless the user's shell-side auth is also failing. If you call `asa.sh readiness` directly, prefer its `remediation` field over `errors[]` when non-null, and apply the `Codex Databricks Override` above when `next_action` is set.
 
 ## Metric Definitions
 
