@@ -58,54 +58,147 @@
         {
           "service": "google_ads",
           "display_name": "Google Ads",
-          "required_tables": [{ "name": "ad_stats" }, { "name": "campaign_history" }],
-          "recommended_tables": [{ "name": "ad_group" }, { "name": "keyword_stats" }]
+          "required_tables": [
+            { "name": "account_history" },
+            { "name": "account_stats" },
+            { "name": "campaign_history" },
+            { "name": "campaign_stats" },
+            { "name": "ad_group_history" },
+            { "name": "ad_group_stats" },
+            { "name": "ad_history" },
+            { "name": "ad_stats" }
+          ],
+          "recommended_tables": [
+            { "name": "keyword_stats" }
+          ]
         },
         {
           "service": "facebook_ads",
           "display_name": "Facebook Ads",
-          "required_tables": [{ "name": "basic_ad" }, { "name": "campaign_history" }],
-          "recommended_tables": [{ "name": "ad_set_history" }]
+          "required_tables": [
+            { "name": "account_history" },
+            { "name": "campaign_history" },
+            { "name": "ad_set_history" },
+            { "name": "ad_history" },
+            { "name": "basic_ad" },
+            { "name": "basic_ad_actions" },
+            { "name": "basic_ad_action_values" }
+          ]
         },
         {
           "service": "bingads",
           "display_name": "Microsoft Ads",
-          "required_tables": [{ "name": "ad_performance_daily_report" }, { "name": "campaign_performance_daily_report" }]
+          "required_tables": [
+            { "name": "account_history" },
+            { "name": "account_performance_daily_report" },
+            { "name": "campaign_history" },
+            { "name": "campaign_performance_daily_report" },
+            { "name": "ad_group_history" },
+            { "name": "ad_group_performance_daily_report" },
+            { "name": "ad_history" },
+            { "name": "ad_performance_daily_report" }
+          ]
         },
         {
           "service": "linkedin_ads",
           "display_name": "LinkedIn Ads",
-          "required_tables": [{ "name": "ad_analytics_by_campaign" }, { "name": "campaign_history" }]
+          "required_tables": [
+            { "name": "account_history" },
+            { "name": "campaign_group_history" },
+            { "name": "campaign_history" },
+            { "name": "creative_history" },
+            { "name": "ad_analytics_by_campaign" },
+            { "name": "ad_analytics_by_creative" }
+          ]
         },
         {
           "service": "tiktok_ads",
           "display_name": "TikTok Ads",
-          "required_tables": [{ "name": "ad_report_daily" }, { "name": "campaign_report_daily" }]
+          "required_tables": [
+            { "name": "advertiser" },
+            { "name": "campaign_history" },
+            { "name": "campaign_report_hourly" },
+            { "name": "adgroup_history" },
+            { "name": "adgroup_report_hourly" },
+            { "name": "ad_history" },
+            { "name": "ad_report_hourly" }
+          ]
         },
         {
           "service": "pinterest_ads",
           "display_name": "Pinterest Ads",
-          "required_tables": [{ "name": "pin_promotion_report" }, { "name": "campaign_report" }]
+          "required_tables": [
+            { "name": "advertiser_history" },
+            { "name": "advertiser_report" },
+            { "name": "campaign_history" },
+            { "name": "campaign_report" },
+            { "name": "ad_group_history" },
+            { "name": "ad_group_report" },
+            { "name": "pin_promotion_history" },
+            { "name": "pin_promotion_report" }
+          ]
         },
         {
           "service": "snapchat_ads",
           "display_name": "Snapchat Ads",
-          "required_tables": [{ "name": "ad_squad_stats" }, { "name": "campaign" }]
+          "required_tables": [
+            { "name": "ad_account_history" },
+            { "name": "campaign_history" },
+            { "name": "campaign_hourly_report" },
+            { "name": "ad_squad_history" },
+            { "name": "ad_squad_hourly_report" },
+            { "name": "ad_history" },
+            { "name": "ad_hourly_report" },
+            { "name": "creative_history" },
+            { "name": "creative_url_tag_history" }
+          ]
         },
         {
           "service": "amazon_ads",
           "display_name": "Amazon Ads",
-          "required_tables": [{ "name": "sponsored_products_report_ad" }, { "name": "portfolio" }]
+          "required_tables": [
+            { "name": "profile" },
+            { "name": "campaign_history" },
+            { "name": "campaign_level_report" },
+            { "name": "ad_group_history" },
+            { "name": "ad_group_level_report" },
+            { "name": "product_ad_history" },
+            { "name": "advertised_product_report" }
+          ],
+          "recommended_tables": [
+            { "name": "portfolio_history" }
+          ]
         },
         {
           "service": "twitter_ads",
           "display_name": "X (Twitter) Ads",
-          "required_tables": [{ "name": "line_item_tweets" }, { "name": "campaign" }]
+          "required_tables": [
+            { "name": "account_history" },
+            { "name": "campaign_history" },
+            { "name": "campaign_report" },
+            { "name": "line_item_history" },
+            { "name": "line_item_report" },
+            { "name": "promoted_tweet_history" },
+            { "name": "promoted_tweet_report" },
+            { "name": "tweet" }
+          ]
         },
         {
           "service": "reddit_ads",
           "display_name": "Reddit Ads",
-          "required_tables": [{ "name": "ad_account" }, { "name": "campaign" }]
+          "required_tables": [
+            { "name": "account_report" },
+            { "name": "account_conversions_report" },
+            { "name": "campaign" },
+            { "name": "campaign_report" },
+            { "name": "campaign_conversions_report" },
+            { "name": "ad_group" },
+            { "name": "ad_group_report" },
+            { "name": "ad_group_conversions_report" },
+            { "name": "ad" },
+            { "name": "ad_report" },
+            { "name": "ad_conversions_report" }
+          ]
         },
         {
           "service": "spotify_ads",
@@ -115,7 +208,15 @@
         {
           "service": "apple_search_ads",
           "display_name": "Apple Search Ads",
-          "required_tables": [{ "name": "ad_group_report" }, { "name": "campaign_report" }]
+          "required_tables": [
+            { "name": "organization" },
+            { "name": "campaign_history" },
+            { "name": "campaign_report" },
+            { "name": "ad_group_history" },
+            { "name": "ad_group_report" },
+            { "name": "ad_history" },
+            { "name": "ad_level_report" }
+          ]
         },
         {
           "service": "google_search_ads_360",

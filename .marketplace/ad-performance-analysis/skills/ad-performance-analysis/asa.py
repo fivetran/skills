@@ -115,6 +115,35 @@ DISCOVERY_VALUE_ALIASES: Dict[str, str] = {
     "linkedinadanalytics": "linkedin_ads",
 }
 
+# Tables/models `discover` requires to recognize a schema as a given connector or
+# as the unified ad_reporting layer. Pinned here instead of read from
+# readiness.json's required_tables/required_models: those lists drive the webapp
+# requirements display and name every table the skill's models depend on, and a
+# schema must contain ALL fingerprint names to match (_names_present is a subset
+# check), so using them here would make discovery reject partially synced
+# connectors it recognizes today.
+DISCOVERY_FINGERPRINT_TABLES: Dict[str, List[str]] = {
+    "google_ads":            ["ad_stats", "campaign_history"],
+    "facebook_ads":          ["basic_ad", "campaign_history"],
+    "bingads":               ["ad_performance_daily_report", "campaign_performance_daily_report"],
+    "linkedin_ads":          ["ad_analytics_by_campaign", "campaign_history"],
+    "tiktok_ads":            ["ad_report_daily", "campaign_report_daily"],
+    "pinterest_ads":         ["pin_promotion_report", "campaign_report"],
+    "snapchat_ads":          ["ad_squad_stats", "campaign"],
+    "amazon_ads":            ["sponsored_products_report_ad", "portfolio"],
+    "twitter_ads":           ["line_item_tweets", "campaign"],
+    "reddit_ads":            ["ad_account", "campaign"],
+    "spotify_ads":           ["ad_account"],
+    "apple_search_ads":      ["ad_group_report", "campaign_report"],
+    "google_search_ads_360": ["conversion_report", "campaign"],
+}
+DISCOVERY_FINGERPRINT_MODELS: List[str] = [
+    "ad_reporting__account_report",
+    "ad_reporting__campaign_report",
+    "ad_reporting__ad_group_report",
+    "ad_reporting__ad_report",
+]
+
 
 def _normalize_label(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
@@ -1167,7 +1196,7 @@ def cmd_discover(
         # of them rather than none.
         if unified_required:
             for schema, tables in schema_tables.items():
-                if _names_present(tables, unified_required, dest_type):
+                if _names_present(tables, DISCOVERY_FINGERPRINT_MODELS, dest_type):
                     unified_candidates.append(schema)
 
     if "unified" in schema_overrides:
@@ -1256,7 +1285,7 @@ def cmd_discover(
     for grp in _CFG.get("connector_groups", []):
         for opt in grp.get("options", []):
             service = opt["service"]
-            required = [t["name"] for t in opt.get("required_tables", [])]
+            required = DISCOVERY_FINGERPRINT_TABLES.get(service) or [t["name"] for t in opt.get("required_tables", [])]
             if not required:
                 continue
             matches = [s for s, tables in schema_tables.items() if _names_present(tables, required, dest_type)]

@@ -62,21 +62,20 @@
           "display_name": "Zendesk Support",
           "required_tables": [
             { "name": "ticket" },
-            { "name": "ticket_comment" }
+            { "name": "ticket_comment" },
+            { "name": "ticket_field_history" },
+            { "name": "ticket_tag" },
+            { "name": "user" },
+            { "name": "group" }
           ],
           "recommended_tables": [
-            { "name": "user" },
             { "name": "organization" },
-            { "name": "group" },
             { "name": "brand" },
             { "name": "schedule" },
             { "name": "schedule_holiday" },
-            { "name": "ticket_field_history" },
-            { "name": "ticket_tag" },
             { "name": "ticket_form_history" },
-            { "name": "satisfaction_rating" },
             { "name": "ticket_sla_policy" },
-            { "name": "sla_policy" }
+            { "name": "sla_policy_metric_history" }
           ]
         }
       ]
@@ -91,13 +90,13 @@
       "applies_to_services": ["zendesk"],
       "required_models": [
         { "name": "zendesk__ticket_enriched" },
-        { "name": "zendesk__ticket_metrics" }
+        { "name": "zendesk__ticket_metrics" },
+        { "name": "zendesk__ticket_field_history" },
+        { "name": "zendesk__ticket_summary" }
       ],
       "recommended_models": [
         { "name": "zendesk__sla_policies" },
-        { "name": "zendesk__ticket_field_history" },
-        { "name": "zendesk__ticket_backlog" },
-        { "name": "zendesk__ticket_summary" }
+        { "name": "zendesk__ticket_backlog" }
       ]
     }
   ]

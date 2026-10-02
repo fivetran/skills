@@ -62,18 +62,21 @@
           "display_name": "Marketo",
           "required_tables": [
             { "name": "lead" },
-            { "name": "activity_send_email" }
-          ],
-          "recommended_tables": [
+            { "name": "activity_send_email" },
             { "name": "activity_email_delivered" },
             { "name": "activity_open_email" },
             { "name": "activity_click_email" },
-            { "name": "activity_unsubscribe_email" },
             { "name": "activity_email_bounced" },
-            { "name": "campaign" },
-            { "name": "program" },
+            { "name": "activity_unsubscribe_email" },
+            { "name": "activity_merge_leads" },
+            { "name": "activity_change_data_value" },
             { "name": "email_template_history" },
-            { "name": "lead_describe" }
+            { "name": "lead_describe" },
+            { "name": "campaign" },
+            { "name": "program" }
+          ],
+          "recommended_tables": [
+            { "name": "activity_delete_lead" }
           ]
         }
       ]
@@ -88,14 +91,13 @@
       "applies_to_services": ["marketo"],
       "required_models": [
         { "name": "marketo__leads" },
-        { "name": "marketo__email_sends" }
-      ],
-      "recommended_models": [
+        { "name": "marketo__email_sends" },
         { "name": "marketo__lead_history" },
-        { "name": "marketo__campaigns" },
         { "name": "marketo__programs" },
+        { "name": "marketo__campaigns" },
         { "name": "marketo__email_templates" }
-      ]
+      ],
+      "recommended_models": []
     }
   ]
 }

@@ -61,7 +61,10 @@
           "display_name": "HubSpot",
           "required_tables": [
             { "name": "deal" },
-            { "name": "deal_pipeline_stage" }
+            { "name": "deal_pipeline" },
+            { "name": "deal_pipeline_stage" },
+            { "name": "deal_stage" },
+            { "name": "deal_property_history" }
           ],
           "recommended_tables": [
             { "name": "deal_contact" },
@@ -82,11 +85,11 @@
       "required": false,
       "applies_to_services": ["hubspot"],
       "required_models": [
-        { "name": "hubspot__deals" }
+        { "name": "hubspot__deals" },
+        { "name": "hubspot__deal_stages" },
+        { "name": "hubspot__deal_history" }
       ],
       "recommended_models": [
-        { "name": "hubspot__deal_stages" },
-        { "name": "hubspot__deal_history" },
         { "name": "hubspot__engagements" },
         { "name": "hubspot__companies" },
         { "name": "hubspot__contacts" }
