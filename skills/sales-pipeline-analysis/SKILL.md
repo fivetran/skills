@@ -22,6 +22,8 @@ argument-hint: "<question about your HubSpot sales pipeline>"
 
 # Sales Pipeline Analyst
 
+> **Script paths:** commands in this skill start with the `CLAUDE_SKILL_DIR` variable. Only Claude Code (2.1.69 and later) fills it in with this skill's folder. If a command still shows the variable unfilled (older Claude Code, or another agent such as Codex, Gemini CLI, or Cursor), replace it with the absolute path of the folder that contains this SKILL.md.
+
 You are a sales analytics expert with live access to HubSpot CRM data synced by Fivetran
 and transformed by the hubspot dbt package. You answer pipeline funnel, stage conversion,
 rep performance, and deal velocity questions by querying `hubspot__deals`,
@@ -47,18 +49,42 @@ Apply this override before any Databricks re-auth guidance:
 
 1. **Validate the local profile.**
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh validate
+   bash ${CLAUDE_SKILL_DIR}/asa.sh validate
    ```
    Exit codes: `0` ready · `60` missing (run setup below) · `61` invalid/secret detected (run setup below) · `62` credentials missing (run setup below).
 
-2. **First-run setup** (only when validate exits `60`, `61`, or `62`).
+2. **First-run setup** (only when validate exits `60`, `61`, or `62`). Ask the user first — this is a discrete two-option decision, not open-ended clarification, so **call a structured multiple-choice question tool directly** if your harness provides one (e.g. Claude Code's `AskUserQuestion`); do not downgrade it to plain chat prose just because it could also be phrased conversationally. Only fall back to a plain-text question if no such tool exists in your harness.
+
+   - question: "Do you know which warehouse your Fivetran data lands in (BigQuery, Snowflake, or Databricks)?"
+   - option 1 — label "I know": go to **Step 2a (warehouse-only setup)** below. Description: "Set up the skill here in the chat."
+   - option 2 — label "I don't know": go to **Step 2b (Fivetran API key setup)** below. Description: "Set up using a Fivetran API key and script."
+
+   **Do not ask whether they know their schema or dataset names.** Only the warehouse type and the database/project/catalog name are required, and schema names are discoverable from the warehouse itself (Step 2a lists them). Gating the branch on schema names pushes users who could have used the warehouse path into the API-key path for no reason.
+
+### Step 2a: Warehouse-only setup (`discover`)
+
+No secret is involved here — `bq`/`snow`/`databricks` are already in this skill's allowed tools — so run this **in this chat session**, not a separate terminal.
+
+Ask only for the warehouse type and the database/project/catalog name. Do **not** ask the user to recall schema names. If they are unsure of the database name too, help them find it with their warehouse CLI (e.g. `gcloud projects list` for BigQuery, `snow connection list` for Snowflake) before considering Step 2b.
+
+Then list the schemas and let the user pick, instead of asking them to remember one:
+```bash
+bash ${CLAUDE_SKILL_DIR}/asa.sh list-schemas \
+  --warehouse <bq|snowflake_cli|databricks_cli> --database <name> 2>&1; echo "EXIT:$?"
+```
+This is a metadata-only lookup on all three warehouses, so it is cheap and reads no table inventory. Show the returned names and ask which look relevant. Recognising a name in a list is far easier than recalling it, and passing the chosen ones as `--schema` scopes the table scan, which is the expensive part. If the user cannot tell which to pick, run `discover` without `--schema` and let fingerprinting decide.
+
+For the full walkthrough — running `discover`, handling its exit codes, and the schema-name caveat — read [`warehouse-discovery.md`](./warehouse-discovery.md) in this skill's directory. Read it on demand now, since the user opted into this path.
+
+### Step 2b: Fivetran API key setup (original flow)
 
    **Do NOT ask for credentials in chat and do NOT invoke setup with `FIVETRAN_API_KEY=...` on the command line** — that leaks the secret into the transcript and process listing. Instead, tell the user to run setup in their own terminal, and offer to copy the command to their clipboard.
 
    **Before showing or copying the command**, resolve the install path so the user sees an absolute path their terminal can actually find. Run:
    ```bash
-   echo "$CLAUDE_PLUGIN_ROOT/skills/sales-pipeline-analysis/asa.sh"
+   p="${CLAUDE_SKILL_DIR}/asa.sh"; test -f "$p" && echo "$p" || echo "NOT_FOUND"
    ```
+   If it prints `NOT_FOUND`, the variable was not filled in. Use the absolute path of the folder that contains this SKILL.md instead, and confirm `asa.sh` exists there before showing the command.
    Use that absolute path in the command you show the user. Example block to present:
 
    > To finish setup, open a terminal and run:
@@ -68,27 +94,27 @@ Apply this override before any Databricks re-auth guidance:
    > It will prompt for your Fivetran API token (input is hidden). Get the base64-encoded token from https://fivetran.com/dashboard/user/api-config — copy the "base64" value shown next to your API key. Let me know when it's done.
 
    After showing the command, ask: *"Want me to copy that to your clipboard?"* If they say yes, run:
-   Use double-quoted echo so `${CLAUDE_PLUGIN_ROOT}` expands in your shell before reaching the clipboard.
-   - macOS: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis" | pbcopy`
-   - Windows: `echo bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis | clip`
-   - Linux: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis" | xsel --clipboard 2>/dev/null`
+   Use the same resolved path:
+   - macOS: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill sales-pipeline-analysis" | pbcopy`
+   - Windows: `echo bash <resolved-absolute-path-to-asa.sh> setup --skill sales-pipeline-analysis | clip`
+   - Linux: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill sales-pipeline-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash <resolved-absolute-path-to-asa.sh> setup --skill sales-pipeline-analysis" | xsel --clipboard 2>/dev/null`
 
    Once the user says they're done, re-run `validate`. Act on the result:
    - `validate` returns `0` → profile is ready. Continue to Step 3.
    - `validate` still returns `60` → tell the user you'll finish setup for them, then **run setup yourself** and summarize the outcome:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill sales-pipeline-analysis 2>&1; echo "EXIT:$?"
      ```
 
    **Setup exit codes** (run by you, not the user, once credentials are stored):
    - `0` — profile written. Continue to Step 3.
-   - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe and STOP. Offer the `!` shortcut: *"Or type `! gcloud auth application-default login` directly in this chat prompt."*
+   - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe and STOP. In Claude Code only, also offer the `!` shortcut (other agents don't support it): *"Or type `! gcloud auth application-default login` directly in this chat prompt."*
    - `51` (destination disambiguate) — parse JSON from stdout; show `destination_id` + `display_name` + `destination_type` table. Suggest the first as default. Once confirmed, run setup with `--destination-id <chosen_id>`.
    - `52` (connection disambiguate) — parse JSON; show numbered table of `connection_id`, `schema`, `sync_state` for the hubspot family. Once user picks, run setup with `--connection hubspot=<chosen_id>`.
    - `53` (insufficient connectors) — no active HubSpot connection found. Tell the user: "No active HubSpot connection was found on this destination. Connect one at https://fivetran.com." Stop.
    - `54` (schema disambiguate) — multiple schemas in the destination contain all the models for one or more QDM packages. Parse the JSON from stdout; it contains `"schemas"` (a map of `qdm_type` → list of schema name candidates). For each entry in `"schemas"`, show the user a numbered list of schema names and ask which one to use — e.g. *"I found two schemas that both contain your HubSpot models. Which should I use?"* Once the user picks, **run setup yourself** with `--schema` for each chosen schema:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh setup --skill sales-pipeline-analysis \
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill sales-pipeline-analysis \
        --destination-id <dest_id> \
        --schema single_source_hubspot=<chosen_schema> 2>&1; echo "EXIT:$?"
      ```
@@ -97,7 +123,7 @@ Apply this override before any Databricks re-auth guidance:
 
 3. **Resolve connector context.**
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh resolve hubspot
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve hubspot
    ```
    Returns a single-line JSON:
    ```json
@@ -112,7 +138,7 @@ Apply this override before any Databricks re-auth guidance:
 
    **On `relation not found`:** retry with `--refresh-on-miss`:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh resolve hubspot --refresh-on-miss
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve hubspot --refresh-on-miss
    ```
 
 4. **Pick the warehouse CLI** from `warehouse_tool`:
@@ -123,7 +149,7 @@ Apply this override before any Databricks re-auth guidance:
 
 5. **Refresh on relation-not-found.** If a query fails because a table or schema is missing, rerun resolve with refresh:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh resolve hubspot --refresh-on-miss
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve hubspot --refresh-on-miss
    ```
    If still failing, stop and report — the schema may have changed and setup needs to be re-run.
 
@@ -195,7 +221,7 @@ Parse the JSON from setup stdout and present:
 ### Freshness Check
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh readiness
+bash ${CLAUDE_SKILL_DIR}/asa.sh readiness
 ```
 
 Parse the JSON response:
@@ -249,7 +275,7 @@ Close with 2–3 useful starter questions.
 ## Prerequisites
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
+bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
 ```
 Prints exact install and auth commands if anything is missing.
 
@@ -429,7 +455,7 @@ If a dashboard was already generated this session:
    ```
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/generate-dashboard.py \
+python3 ${CLAUDE_SKILL_DIR}/generate-dashboard.py \
   --data /tmp/hubspot_pipeline_payload.json \
   --output /tmp/hubspot_pipeline_dashboard.html
 open /tmp/hubspot_pipeline_dashboard.html
@@ -439,7 +465,7 @@ open /tmp/hubspot_pipeline_dashboard.html
 
 | Error | Response |
 |---|---|
-| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_PLUGIN_ROOT}/skills/sales-pipeline-analysis/asa.sh check-cli <tool>` to diagnose auth." |
+| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <tool>` to diagnose auth." |
 | `hubspot__deal_stages` missing | "Stage-level analysis requires the `deal_stage` and `deal_pipeline_stage` source tables. Check that `hubspot_sales_enabled = true` and these tables are syncing." |
 | `hubspot__deal_history` missing | "Close date history requires `hubspot_deal_property_history_enabled = true` in your dbt project variables." |
 | Zero-row results | "Query returned no results. The date range may have no data, or filters may be too narrow." |

@@ -11,8 +11,18 @@ Subcommands:
         [--no-skip]                          # clear all persisted skips
         [--no-schema]                        # clear all persisted schema overrides
         [--refresh] [--skill <id>]
+  discover --warehouse <bq|snowflake_cli|databricks_cli> --database <name>
+           [--location <region>] [--schema <name> ...]
+           [--schema-override KEY=SCHEMA ...] [--skill <id>]
+                                               # warehouse-only setup, no Fivetran API key.
+                                               # 0=ok | 54=schema disambiguate | 53=insufficient
+                                               # connectors | 70/71=CLI missing/unauth
   resolve <family> [--refresh-on-miss]       # prints JSON to stdout
   readiness [FAM ...]                         # parallel data-freshness probe across active_models
+  list-schemas --warehouse <bq|snowflake_cli|databricks_cli> --database <name>
+                                               # cheap metadata-only schema name list,
+                                               # for offering the user a pick-list before
+                                               # the full table scan. 0=ok | 53=none found
   check-cli <bq|snowflake_cli|databricks_cli> # 0=ok | 70=missing | 71=unauth
 """
 
@@ -509,40 +519,84 @@ def _agent_print(payload: dict, tty_message: str) -> None:
 # Warehouse query helpers (used by schema probe)
 # ---------------------------------------------------------------------------
 
-def _bq_query(sql: str, timeout: int = 30) -> Optional[List[dict]]:
+def _bq_query(sql: str, timeout: int = 30, raise_on_error: bool = False, max_rows: Optional[int] = None) -> Optional[List[dict]]:
+    cmd = ["bq", "query", "--use_legacy_sql=false", "--format=prettyjson", "--quiet"]
+    if max_rows is not None:
+        # bq's own default is 100 rows — silently truncates wide pulls (e.g. an
+        # INFORMATION_SCHEMA.TABLES scan across several schemas easily exceeds
+        # it). Callers doing bulk listing must pass an explicit ceiling.
+        cmd.append(f"--max_rows={max_rows}")
+    cmd.append(sql)
     r = subprocess.run(
-        ["bq", "query", "--use_legacy_sql=false", "--format=prettyjson", "--quiet", sql],
+        cmd,
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
-        print(f"[asa] warn: bq query failed: {r.stderr.strip()}", file=sys.stderr)
+        msg = r.stderr.strip() or r.stdout.strip()
+        print(f"[asa] warn: bq query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     return json.loads(r.stdout.strip() or "[]")
 
 
-def _snow_query(sql: str, timeout: int = 30) -> Optional[List]:
+def _snow_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List]:
     r = subprocess.run(
         ["snow", "sql", "-q", sql, "--output-format", "json"],
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
+        msg = r.stderr.strip() or r.stdout.strip()
+        print(f"[asa] warn: snow query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     return json.loads(r.stdout.strip() or "[]")
 
 
-def _databricks_query(sql: str, timeout: int = 30) -> Optional[List]:
+def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Optional[List]:
+    # Modern Databricks CLI (v1.x) has no `databricks sql execute` subcommand;
+    # the SQL Statement Execution REST API is the supported path. Route through
+    # `databricks api post` so we keep using the CLI's existing auth profile.
+    warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "").strip()
+    if not warehouse_id:
+        msg = ("DATABRICKS_WAREHOUSE_ID not set. Set it to the id of a SQL "
+               "warehouse in your Databricks workspace (visible under SQL "
+               "Warehouses) and re-run.")
+        print(f"[asa] {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
+        return None
+
+    body = json.dumps({
+        "warehouse_id": warehouse_id,
+        "statement":    sql,
+        "wait_timeout": f"{min(max(timeout, 5), 50)}s",
+    })
     with _DATABRICKS_CLI_LOCK:
         r = subprocess.run(
-            ["databricks", "sql", "execute", "--sql", sql],
-            capture_output=True, text=True, timeout=timeout,
+            ["databricks", "api", "post", "/api/2.0/sql/statements/", "--json", body],
+            capture_output=True, text=True, timeout=timeout + 10,
         )
     if r.returncode != 0:
+        msg = r.stderr.strip() or r.stdout.strip()
+        print(f"[asa] warn: databricks query failed: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
         return None
     try:
-        data = json.loads(r.stdout)
-        return data.get("result", {}).get("data_array") or []
+        payload = json.loads(r.stdout)
     except Exception:
         return None
+    state = (payload.get("status") or {}).get("state")
+    if state != "SUCCEEDED":
+        err = (payload.get("status") or {}).get("error", {}).get("message", "")
+        msg = f"databricks statement state={state} {err}".strip()
+        print(f"[asa] warn: {msg}", file=sys.stderr)
+        if raise_on_error:
+            raise RuntimeError(msg)
+        return None
+    return (payload.get("result") or {}).get("data_array") or []
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +683,562 @@ def _probe_schema_databricks(
     if isinstance(rows[0], list):
         return [str(r[0]) for r in rows if isinstance(r, list) and r]
     return [str(rows[0])]
+
+
+
+# ---------------------------------------------------------------------------
+# `discover` subcommand — warehouse-only setup (no Fivetran API key)
+# ---------------------------------------------------------------------------
+
+# Above this many schemas in one unscoped scan, warn that discovery may be
+# fingerprinting schemas owned by other teams in a shared project.
+BROAD_SCAN_SCHEMA_WARN_THRESHOLD = 15
+
+WAREHOUSE_TOOL_TO_DEST_TYPE: Dict[str, str] = {
+    "bq": "bigquery",
+    "snowflake_cli": "snowflake",
+    "databricks_cli": "databricks",
+}
+
+# Tables/models `discover` requires to recognize a schema as a connector's raw
+# schema or as its dbt (single_source) schema. A schema must contain ALL of them
+# (_names_present is a subset check). Pinned here instead of read from
+# readiness.json's required_tables/required_models, which list every table the
+# skill's models depend on and drive the webapp requirements display; using
+# those would make discovery reject partially synced connectors.
+DISCOVERY_FINGERPRINT_TABLES: Dict[str, List[str]] = {'marketo': ['lead', 'activity_send_email']}
+DISCOVERY_FINGERPRINT_MODELS: Dict[str, List[str]] = {'marketo': ['marketo__leads', 'marketo__email_sends']}
+
+
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def _validate_identifier(name: str, kind: str) -> None:
+    """Discovery interpolates database/schema names directly into SQL (they're
+    identifiers, not values, so they can't be bind-parameterized). Reject
+    anything outside a safe identifier charset up front instead of letting it
+    reach the warehouse as a broken or misinterpreted query."""
+    if not name or not _SAFE_IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"invalid {kind} {name!r}: only letters, digits, underscore, hyphen, "
+            "and dot are allowed"
+        )
+
+
+def _list_schema_names(dest_type: str, database: str) -> List[str]:
+    """Return just the schema names in a database, without reading table inventory.
+
+    This is deliberately separate from `_list_tables`. Listing schema names is a
+    metadata lookup on all three warehouses, whereas the table scan reads
+    INFORMATION_SCHEMA across every schema and is the expensive part. Discovery
+    uses this to offer the user a pick-list instead of requiring them to recall a
+    schema name up front, and on BigQuery it also sidesteps `--location`, because
+    `bq ls` is not a regional INFORMATION_SCHEMA view.
+    """
+    _validate_identifier(database, "--database")
+    if dest_type == "bigquery":
+        r = subprocess.run(
+            ["bq", "ls", "--max_results=10000", "--format=json", f"--project_id={database}"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or r.stdout.strip())
+        out = []
+        for entry in json.loads(r.stdout.strip() or "[]"):
+            ref = (entry or {}).get("datasetReference") or {}
+            name = ref.get("datasetId") or (entry or {}).get("id", "").split(":")[-1]
+            if name:
+                out.append(name)
+        return sorted(set(out))
+
+    if dest_type == "snowflake":
+        rows = _snow_query(f"SHOW SCHEMAS IN DATABASE {database}", raise_on_error=True) or []
+    elif dest_type == "databricks":
+        # Backticks are required, not cosmetic: a catalog name containing a
+        # hyphen (e.g. `luke-test`) is a valid Databricks identifier but is
+        # rejected as INVALID_IDENTIFIER when interpolated bare.
+        rows = _databricks_query(f"SHOW SCHEMAS IN `{database}`", raise_on_error=True) or []
+    else:
+        raise ValueError(f"unsupported destination_type for schema listing: {dest_type!r}")
+
+    out = []
+    for r_ in rows:
+        if isinstance(r_, dict):
+            # SHOW SCHEMAS labels the column differently per warehouse.
+            val = (r_.get("name") or r_.get("NAME")
+                   or r_.get("schema_name") or r_.get("databaseName"))
+        elif isinstance(r_, list) and r_:
+            val = r_[0]
+        else:
+            continue
+        if val:
+            out.append(str(val))
+    return sorted(set(out))
+
+
+# A mistyped database and a missing permission return the same error on
+# BigQuery ("Access Denied ... or perhaps it does not exist"), so both map to
+# exit 53 with one message that covers both causes.
+_NOT_FOUND_RE = re.compile(r"not\s+found|does\s+not\s+exist|access\s+denied|permission\s+denied", re.I)
+
+
+def _not_found_payload(database: str) -> dict:
+    return {
+        "status": "not_found",
+        "database": database,
+        "message": (f"Could not find or access {database!r}. Check the name and that "
+                    "your warehouse login can read it, or fall back to the API-key setup."),
+    }
+
+
+def cmd_list_schemas(warehouse_tool: str, database: str) -> int:
+    if warehouse_tool not in WAREHOUSE_TOOL_TO_DEST_TYPE:
+        print(f"[asa] unknown --warehouse {warehouse_tool!r}; expected one of "
+              f"{sorted(WAREHOUSE_TOOL_TO_DEST_TYPE)}", file=sys.stderr)
+        return 1
+    dest_type = WAREHOUSE_TOOL_TO_DEST_TYPE[warehouse_tool]
+
+    cli_status = cmd_check_cli(warehouse_tool)
+    if cli_status != EXIT_OK:
+        return cli_status
+
+    try:
+        schemas = _list_schema_names(dest_type, database)
+    except ValueError as exc:
+        print(f"[asa] {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        if _NOT_FOUND_RE.search(str(exc)):
+            _agent_print({**_not_found_payload(database), "schemas": []},
+                         f"Could not find or access {database}.")
+            return EXIT_INSUFFICIENT_CONNECTORS
+        print(f"[asa] could not list schemas in {database!r}: {exc}", file=sys.stderr)
+        return 1
+
+    if not schemas:
+        _agent_print(
+            {"status": "not_found", "database": database, "schemas": [],
+             "message": f"No schemas found in {database!r}. Check the database/project/catalog name."},
+            f"No schemas found in {database}.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    _agent_print(
+        {"status": "ok", "database": database, "schemas": schemas, "count": len(schemas)},
+        f"{len(schemas)} schemas in {database}: {', '.join(schemas)}",
+    )
+    return EXIT_OK
+
+
+def _resolve_scanned_schema(name: str, schema_tables: Dict[str, set]) -> Optional[str]:
+    """Map an operator-supplied schema name onto an actually-scanned schema key.
+
+    Snowflake reports identifiers uppercased, so `--schema-override unified=ad_reporting`
+    would never match the scanned key `AD_REPORTING` under an exact comparison, and the
+    override was rejected even though the schema was plainly present. Try the exact name
+    first, then fall back to a case-insensitive match, and return the scanned spelling so
+    callers index `schema_tables` with a key that exists.
+    """
+    if name in schema_tables:
+        return name
+    lowered = name.lower()
+    for scanned in schema_tables:
+        if scanned.lower() == lowered:
+            return scanned
+    return None
+
+
+def _list_tables_bq(project: str, location: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(project, "--database")
+    region = f"region-{(location or 'us').lower()}"
+    sql = f"SELECT table_schema, table_name FROM `{project}.{region}.INFORMATION_SCHEMA.TABLES`"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s}'" for s in schemas)
+        sql += f" WHERE table_schema IN ({names_sql})"
+    # A handful of schemas can easily hold hundreds of tables combined (e.g. a
+    # single ad-connector raw schema commonly has 50-100+ report tables) —
+    # bq's un-overridden default row cap is 100, well below that.
+    rows = _bq_query(sql, raise_on_error=True, max_rows=100000) or []
+    return [(r.get("table_schema"), r.get("table_name")) for r in rows if r.get("table_schema") and r.get("table_name")]
+
+
+def _list_tables_snowflake(database: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(database, "--database")
+    sql = f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {database}.INFORMATION_SCHEMA.TABLES"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s.upper()}'" for s in schemas)
+        sql += f" WHERE TABLE_SCHEMA IN ({names_sql})"
+    rows = _snow_query(sql, raise_on_error=True) or []
+    out = []
+    for r in rows:
+        if isinstance(r, dict):
+            schema, table = r.get("TABLE_SCHEMA") or r.get("table_schema"), r.get("TABLE_NAME") or r.get("table_name")
+        elif isinstance(r, list) and len(r) >= 2:
+            schema, table = str(r[0]), str(r[1])
+        else:
+            continue
+        if schema and table:
+            out.append((schema, table))
+    return out
+
+
+def _list_tables_databricks(catalog: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    _validate_identifier(catalog, "--database")
+    sql = f"SELECT table_schema, table_name FROM system.information_schema.tables WHERE table_catalog = '{catalog}'"
+    if schemas:
+        for s in schemas:
+            _validate_identifier(s, "--schema")
+        names_sql = ", ".join(f"'{s}'" for s in schemas)
+        sql += f" AND table_schema IN ({names_sql})"
+    rows = _databricks_query(sql, raise_on_error=True) or []
+    out = []
+    for r in rows:
+        if isinstance(r, list) and len(r) >= 2:
+            out.append((str(r[0]), str(r[1])))
+    return out
+
+
+def _list_tables(dest_type: str, database: str, location: str, schemas: Optional[List[str]]) -> List[Tuple[str, str]]:
+    if dest_type == "bigquery":
+        return _list_tables_bq(database, location, schemas)
+    if dest_type == "snowflake":
+        return _list_tables_snowflake(database, schemas)
+    if dest_type == "databricks":
+        return _list_tables_databricks(database, schemas)
+    raise ValueError(f"unsupported destination_type for discovery: {dest_type!r}")
+
+
+def _schema_table_map(pairs: List[Tuple[str, str]], dest_type: str) -> Dict[str, set]:
+    """Build {schema_name: {table_name, ...}}. Snowflake uppercases identifiers by
+    default (mirrors _probe_schema_snowflake's existing uppercasing behavior)."""
+    out: Dict[str, set] = {}
+    for schema, table in pairs:
+        out.setdefault(schema, set()).add(table.upper() if dest_type == "snowflake" else table)
+    return out
+
+
+def _names_present(table_set: set, names: List[str], dest_type: str) -> bool:
+    check = {n.upper() for n in names} if dest_type == "snowflake" else set(names)
+    return check.issubset(table_set)
+
+
+def _names_matched(table_set: set, names: List[str], dest_type: str) -> List[str]:
+    check = [n.upper() if dest_type == "snowflake" else n for n in names]
+    matched_upper = {n for n in check if n in table_set}
+    # Return the caller's original casing for whichever names matched.
+    return [orig for orig, chk in zip(names, check) if chk in matched_upper]
+
+
+def _bq_dataset_location(project: str, dataset: str) -> Optional[str]:
+    """Read a BigQuery dataset's true region, so `_list_tables_bq` queries the
+    right INFORMATION_SCHEMA region view. Probing the wrong region silently
+    returns zero rows, which would otherwise be misread as "nothing found."""
+    try:
+        r = subprocess.run(
+            ["bq", "show", "--format=prettyjson", f"{project}:{dataset}"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if r.returncode != 0:
+            return None
+        info = json.loads(r.stdout)
+        loc = info.get("location")
+        return str(loc) if loc else None
+    except Exception:
+        return None
+
+
+
+def _discovery_quickstart_for(family: str) -> Optional[dict]:
+    for qm in _CFG.get("quickstart_models") or []:
+        if family in (qm.get("applies_to_services") or []):
+            return qm
+    return None
+
+
+def cmd_discover(
+    warehouse_tool: str,
+    database: str,
+    location: Optional[str],
+    schema_hints: List[str],
+    schema_overrides: Dict[str, str],
+    skill_id: str,
+) -> int:
+    if warehouse_tool not in WAREHOUSE_TOOL_TO_DEST_TYPE:
+        print(f"[asa] unknown --warehouse {warehouse_tool!r}; expected one of "
+              f"{sorted(WAREHOUSE_TOOL_TO_DEST_TYPE)}", file=sys.stderr)
+        return 1
+    dest_type = WAREHOUSE_TOOL_TO_DEST_TYPE[warehouse_tool]
+
+    cli_status = cmd_check_cli(warehouse_tool)
+    if cli_status != EXIT_OK:
+        return cli_status
+
+    # BigQuery region must be known, never assumed: scanning the wrong region's
+    # INFORMATION_SCHEMA returns zero rows that look exactly like an empty project.
+    if dest_type == "bigquery" and not location:
+        if schema_hints:
+            location = _bq_dataset_location(database, schema_hints[0])
+        if not location:
+            print(
+                "[asa] BigQuery region could not be determined. "
+                "Pass --location <region> (e.g. US, EU, us-east1) and retry. "
+                "A scan against the wrong region returns zero rows that are "
+                "indistinguishable from an empty project, so discovery will not guess.",
+                file=sys.stderr,
+            )
+            return 1
+    resolved_location = location or "US"
+
+    try:
+        pairs = _list_tables(dest_type, database, resolved_location, schema_hints or None)
+    except RuntimeError as exc:
+        if _NOT_FOUND_RE.search(str(exc)):
+            _agent_print(_not_found_payload(database), f"Could not find or access {database}.")
+            return EXIT_INSUFFICIENT_CONNECTORS
+        print(f"[asa] discovery query failed: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"[asa] {exc}", file=sys.stderr)
+        return 1
+
+    schema_tables = _schema_table_map(pairs, dest_type)
+    if not schema_tables:
+        _agent_print(
+            {
+                "status": "not_found",
+                "message": "No tables found in the given database/schema(s). Check the "
+                            "database name and schema hints, or fall back to the "
+                            "API-key setup.",
+            },
+            "No tables found. Return to your agent chat to continue.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    broad_scan_warning: Optional[str] = None
+    if not schema_hints and len(schema_tables) > BROAD_SCAN_SCHEMA_WARN_THRESHOLD:
+        broad_scan_warning = (
+            f"Found {len(schema_tables)} schemas in {database!r} and no --schema "
+            "hints were given. On a shared project this can fingerprint schemas "
+            "belonging to unrelated teams. Pass --schema <name> to narrow the scan "
+            "if the result below looks wrong."
+        )
+        print(f"[asa] warn: {broad_scan_warning}", file=sys.stderr)
+
+    families = sorted(REQUIRED_POOL)
+    ss_prefix = "single_source_"
+    valid_override_keys = set(families) | {ss_prefix + f for f in families}
+    unknown_override_keys = sorted(k for k in schema_overrides if k not in valid_override_keys)
+    if unknown_override_keys:
+        print(
+            f"[asa] warn: ignoring unrecognized --schema-override key(s) "
+            f"{', '.join(repr(k) for k in unknown_override_keys)}. Expected one of: "
+            f"{', '.join(sorted(valid_override_keys))}.",
+            file=sys.stderr,
+        )
+
+    def _checked_override(key: str, raw_value: str) -> str:
+        try:
+            _validate_identifier(raw_value, f"--schema-override {key}")
+        except ValueError as exc:
+            print(f"[asa] {exc}", file=sys.stderr)
+            raise
+        resolved = _resolve_scanned_schema(raw_value, schema_tables)
+        if resolved is None:
+            print(
+                f"[asa] --schema-override {key}={raw_value!r} was not among the "
+                f"scanned schemas ({', '.join(sorted(schema_tables)) or 'none'}). "
+                "Add it via --schema and re-run.",
+                file=sys.stderr,
+            )
+            raise ValueError(f"unscanned schema for {key}")
+        return resolved
+
+    # --- 1. Raw connector schemas, by table fingerprint ----------------------
+    raw_matches: Dict[str, List[str]] = {}
+    for grp in _CFG.get("connector_groups", []):
+        for opt in grp.get("options", []):
+            service = opt["service"]
+            fingerprint = DISCOVERY_FINGERPRINT_TABLES.get(service) or [t["name"] for t in opt.get("required_tables", [])]
+            if not fingerprint:
+                continue
+            matches = [s for s, tables in schema_tables.items() if _names_present(tables, fingerprint, dest_type)]
+            if matches:
+                raw_matches[service] = matches
+
+    # --- 2. Single-source dbt schemas, by model fingerprint -------------------
+    qdm_matches: Dict[str, List[str]] = {}
+    qdm_models: Dict[str, Tuple[List[str], List[str]]] = {}
+    for family in families:
+        qm = _discovery_quickstart_for(family)
+        if not qm:
+            continue
+        required = [m["name"] for m in qm.get("required_models", [])]
+        recommended = [m["name"] for m in qm.get("recommended_models", [])]
+        qdm_models[family] = (required, recommended)
+        fingerprint = DISCOVERY_FINGERPRINT_MODELS.get(family) or required
+        if not fingerprint:
+            continue
+        matches = [s for s, tables in schema_tables.items() if _names_present(tables, fingerprint, dest_type)]
+        if matches:
+            qdm_matches[family] = matches
+
+    needs_disambig: Dict[str, List[str]] = {}
+    for family, cands in raw_matches.items():
+        if len(cands) > 1 and family not in schema_overrides:
+            needs_disambig[family] = sorted(cands)
+    for family, cands in qdm_matches.items():
+        key = ss_prefix + family
+        if len(cands) > 1 and key not in schema_overrides:
+            needs_disambig[key] = sorted(cands)
+    if needs_disambig:
+        _agent_print(
+            {
+                "status": "disambiguate_required",
+                "schemas": needs_disambig,
+                "hint": "Re-run with: " + " ".join(
+                    f"--schema-override {k}={c[0]}" for k, c in sorted(needs_disambig.items())
+                ),
+            },
+            "Multiple schemas found: " + "; ".join(
+                f"{k}: {', '.join(c)}" for k, c in sorted(needs_disambig.items())
+            ) + ". Re-run with --schema-override <key>=<name> for each.",
+        )
+        return EXIT_SCHEMA_DISAMBIGUATE
+
+    # --- 3. Build connector entries -------------------------------------------
+    candidate_families = set(raw_matches) | set(qdm_matches)
+    for key in schema_overrides:
+        if key in REQUIRED_POOL:
+            candidate_families.add(key)
+        elif key.startswith(ss_prefix) and key[len(ss_prefix):] in REQUIRED_POOL:
+            candidate_families.add(key[len(ss_prefix):])
+
+    connectors: Dict[str, dict] = {}
+    single_source_qdms: List[dict] = []
+    for family in sorted(candidate_families):
+        try:
+            raw_override = schema_overrides.get(family)
+            raw_schema = (_checked_override(family, raw_override) if raw_override
+                          else (raw_matches.get(family) or [None])[0])
+            ss_key = ss_prefix + family
+            ss_override = schema_overrides.get(ss_key)
+            ss_schema = (_checked_override(ss_key, ss_override) if ss_override
+                         else (qdm_matches.get(family) or [None])[0])
+        except ValueError:
+            return 1
+
+        active_models: List[str] = []
+        missing_required: List[str] = []
+        if ss_schema:
+            required, recommended = qdm_models.get(family, ([], []))
+            active_models = _names_matched(schema_tables[ss_schema], required + recommended, dest_type)
+            # The fingerprint only needs a few models to recognize the schema, so
+            # list the required ones that are absent instead of dropping them silently.
+            missing_required = [m for m in required if m not in active_models]
+
+        entry = {
+            "connection_id":        f"manual:{family}",
+            "raw_schema":           raw_schema or ss_schema,
+            "model_tier":           "single_source" if ss_schema else "raw",
+            "unified_schema":       None,
+            "single_source_schema": ss_schema,
+            "active_models":        active_models,
+            "excluded_models":      [],
+            "last_ended_at":        None,
+            "qdm_functional":       True,
+            "missing_required_models": missing_required,
+        }
+        if raw_schema is None:
+            # dbt schema found but no raw schema fingerprinted. raw-table queries
+            # will not work until the raw schema is named via --schema-override.
+            entry["raw_schema_is_placeholder"] = True
+        connectors[family] = entry
+        if ss_schema:
+            single_source_qdms.append({
+                "family":         family,
+                "schema":         ss_schema,
+                "active_models":  active_models,
+                "missing_required_models": missing_required,
+                "last_ended_at":  None,
+                "qdm_functional": True,
+            })
+
+    min_required = SKILL_MIN_REQUIRED.get(skill_id, 1)
+    found = sorted(connectors.keys())
+    if len(found) < min_required:
+        _agent_print(
+            {
+                "status": "insufficient_connectors",
+                "required_pool": sorted(REQUIRED_POOL),
+                "found": found,
+                "min_required_count": min_required,
+            },
+            "No supported marketing automation connector data found. Return to your agent chat for details.",
+        )
+        return EXIT_INSUFFICIENT_CONNECTORS
+
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    plugin_path = os.path.join(script_dir, "..", ".claude-plugin", "plugin.json")
+    skill_version = "0.1.0"
+    try:
+        with open(plugin_path, "r", encoding="utf-8") as f:
+            pdata = json.load(f)
+        v = pdata.get("version")
+        if isinstance(v, str) and v:
+            skill_version = v
+    except Exception:
+        pass
+
+    profile = {
+        "config_version": PROFILE_VERSION,
+        "install_id":    uuid.uuid4().hex,
+        "discovered_at": _now_utc(),
+        "skill":         {"id": skill_id, "version": skill_version},
+        "destination":   {
+            "destination_id":   "manual",
+            "destination_type": dest_type,
+            "warehouse_tool":   warehouse_tool,
+            "database":         database,
+            "location":         resolved_location,
+        },
+        "skipped_families": [],
+        "schema_overrides": dict(schema_overrides),
+        "connectors": connectors,
+        "setup_method": "warehouse_discovery",
+        "discovery_inputs": {
+            "warehouse_tool": warehouse_tool,
+            "database":       database,
+            "location":       resolved_location,
+            "schema_hints":   list(schema_hints),
+        },
+    }
+    _write_profile(profile)
+
+    payload = {
+        "status":       "ok",
+        "profile_path": _profile_path(),
+        "destination":  profile["destination"],
+        "connections": [
+            {"family": f, "connection_id": e["connection_id"], "schema": e["raw_schema"], "model_tier": e["model_tier"]}
+            for f, e in sorted(connectors.items())
+        ],
+        "single_source_qdms": single_source_qdms,
+        "multi_source_qdms":  [],
+        "raw_schema_placeholders": sorted(f for f, e in connectors.items() if e.get("raw_schema_is_placeholder")),
+    }
+    if broad_scan_warning:
+        payload["broad_scan_warning"] = broad_scan_warning
+    if unknown_override_keys:
+        payload["ignored_schema_override_keys"] = unknown_override_keys
+    _agent_print(
+        payload,
+        "Warehouse discovery complete. Return to your agent chat to continue.",
+    )
+    return EXIT_OK
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +1499,7 @@ def cmd_setup(
     else:
         _agent_print(
             {"status": "disambiguate_required", "suggested": destinations[0], "destinations": destinations},
-            "Credentials verified. Return to your Claude Code chat to continue setup.",
+            "Credentials verified. Return to your agent chat to continue setup.",
         )
         return EXIT_DESTINATION_DISAMBIGUATE
 
@@ -1026,7 +1636,7 @@ def cmd_setup(
     if needs_disambig:
         _agent_print(
             {"status": "disambiguate_required", "families": needs_disambig},
-            "Multiple active connections found for the same source. Return to your Claude Code chat to continue setup.",
+            "Multiple active connections found for the same source. Return to your agent chat to continue setup.",
         )
         return EXIT_CONNECTION_DISAMBIGUATE
 
@@ -1034,7 +1644,7 @@ def cmd_setup(
     if len(required_found) < min_required:
         _agent_print(
             {"status": "insufficient_connectors", "required_pool": sorted(REQUIRED_POOL), "found": required_found, "min_required_count": min_required},
-            "No supported marketing automation connector found on this destination. Return to your Claude Code chat for details.",
+            "No supported marketing automation connector found on this destination. Return to your agent chat for details.",
         )
         return EXIT_INSUFFICIENT_CONNECTORS
 
@@ -1074,7 +1684,7 @@ def cmd_setup(
     if needs_schema_disambig:
         _agent_print(
             {"status": "disambiguate_required", "schemas": needs_schema_disambig},
-            "Multiple schemas found. Return to your Claude Code chat to continue setup.",
+            "Multiple schemas found. Return to your agent chat to continue setup.",
         )
         return EXIT_SCHEMA_DISAMBIGUATE
 
@@ -1175,7 +1785,7 @@ def cmd_setup(
             "single_source_qdms": single_source_qdms,
             "multi_source_qdms":  [],
         },
-        "Fivetran profile saved. Return to your Claude Code chat to continue.",
+        "Fivetran profile saved. Return to your agent chat to continue.",
     )
     return EXIT_OK
 
@@ -1193,16 +1803,32 @@ def cmd_resolve(family: str, refresh_on_miss: bool) -> int:
         print("[asa] profile invalid — re-run setup", file=sys.stderr)
         return EXIT_PROFILE_INVALID
 
-    if refresh_on_miss and _resolve_credentials():
-        dest_id  = raw.get("destination", {}).get("destination_id")
+    if refresh_on_miss:
         skill_id = raw.get("skill", {}).get("id", "marketing-automation-analysis")
-        cmd_setup(
-            destination_id_override=dest_id,
-            connection_overrides={},
-            skill_id=skill_id,
-            refresh=True,
-        )
-        raw = _read_profile() or raw
+        if raw.get("setup_method") == "warehouse_discovery":
+            # Manual profiles have no Fivetran API credentials — never prompt for
+            # one on refresh. Re-run the same warehouse probe that built the
+            # profile, using its stored discovery inputs.
+            inputs = raw.get("discovery_inputs") or {}
+            if inputs.get("warehouse_tool") and inputs.get("database"):
+                cmd_discover(
+                    warehouse_tool=inputs["warehouse_tool"],
+                    database=inputs["database"],
+                    location=inputs.get("location"),
+                    schema_hints=inputs.get("schema_hints") or [],
+                    schema_overrides=raw.get("schema_overrides") or {},
+                    skill_id=skill_id,
+                )
+                raw = _read_profile() or raw
+        elif _resolve_credentials():
+            dest_id = raw.get("destination", {}).get("destination_id")
+            cmd_setup(
+                destination_id_override=dest_id,
+                connection_overrides={},
+                skill_id=skill_id,
+                refresh=True,
+            )
+            raw = _read_profile() or raw
 
     skipped = raw.get("skipped_families") or []
     if family in skipped:
@@ -1236,6 +1862,7 @@ def cmd_resolve(family: str, refresh_on_miss: bool) -> int:
         "unified_schema":      entry.get("unified_schema"),
         "single_source_schema": entry.get("single_source_schema"),
         "active_models":       list(entry.get("active_models") or []),
+        "missing_required_models": list(entry.get("missing_required_models") or []),
         "excluded_models":     list(entry.get("excluded_models") or []),
         "qdm_last_ended_at":   entry.get("last_ended_at"),
         "qdm_functional":      qdm_functional,
@@ -1462,7 +2089,7 @@ def cmd_readiness(family_filter: Optional[List[str]] = None) -> int:
 def main() -> int:
     args = sys.argv[1:]
     if not args:
-        print("usage: asa.py <validate|setup|resolve|check-cli> [args...]", file=sys.stderr)
+        print("usage: asa.py <validate|setup|discover|list-schemas|resolve|check-cli> [args...]", file=sys.stderr)
         return 1
 
     subcmd, rest = args[0], args[1:]
@@ -1512,6 +2139,61 @@ def main() -> int:
                 print(f"[asa] unknown argument: {arg!r}", file=sys.stderr)
                 return 1
         return cmd_setup(destination_id, connection_overrides, skill_id, refresh, skip_families, clear_skip, schema_overrides_arg or None, clear_schema_overrides)
+
+    if subcmd == "list-schemas":
+        ls_warehouse: Optional[str] = None
+        ls_database:  Optional[str] = None
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--warehouse" and i + 1 < len(rest):
+                ls_warehouse = rest[i + 1]; i += 2
+            elif rest[i] == "--database" and i + 1 < len(rest):
+                ls_database = rest[i + 1]; i += 2
+            else:
+                print(f"[asa] unknown argument: {rest[i]!r}", file=sys.stderr)
+                return 1
+        if not ls_warehouse or not ls_database:
+            print("usage: asa.py list-schemas --warehouse <bq|snowflake_cli|databricks_cli> "
+                  "--database <project|database|catalog>", file=sys.stderr)
+            return 1
+        return cmd_list_schemas(ls_warehouse, ls_database)
+
+    if subcmd == "discover":
+        warehouse_tool: Optional[str] = None
+        database: Optional[str] = None
+        location: Optional[str] = None
+        schema_hints: List[str] = []
+        schema_overrides_disc: Dict[str, str] = {}
+        skill_id = "marketing-automation-analysis"
+        i = 0
+        while i < len(rest):
+            arg = rest[i]
+            if arg == "--warehouse" and i + 1 < len(rest):
+                warehouse_tool = rest[i + 1]; i += 2
+            elif arg == "--database" and i + 1 < len(rest):
+                database = rest[i + 1]; i += 2
+            elif arg == "--location" and i + 1 < len(rest):
+                location = rest[i + 1]; i += 2
+            elif arg == "--schema" and i + 1 < len(rest):
+                schema_hints.append(rest[i + 1]); i += 2
+            elif arg == "--schema-override" and i + 1 < len(rest):
+                pair = rest[i + 1]
+                if "=" not in pair:
+                    print(f"[asa] --schema-override requires KEY=SCHEMA_NAME, got: {pair!r}", file=sys.stderr)
+                    return 1
+                key, sname = pair.split("=", 1)
+                schema_overrides_disc[key.strip()] = sname.strip(); i += 2
+            elif arg == "--skill" and i + 1 < len(rest):
+                skill_id = rest[i + 1]; i += 2
+            else:
+                print(f"[asa] unknown argument: {arg!r}", file=sys.stderr)
+                return 1
+        if not warehouse_tool or not database:
+            print("usage: asa.py discover --warehouse <bq|snowflake_cli|databricks_cli> --database <name> "
+                  "[--location <region>] [--schema <name> ...] [--schema-override KEY=SCHEMA ...] [--skill <id>]",
+                  file=sys.stderr)
+            return 1
+        return cmd_discover(warehouse_tool, database, location, schema_hints, schema_overrides_disc, skill_id)
 
     if subcmd == "resolve":
         if not rest:

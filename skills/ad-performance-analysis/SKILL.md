@@ -22,6 +22,8 @@ argument-hint: "<question about ad performance>"
 
 # Cross-Channel Ad Performance Analyst
 
+> **Script paths:** commands in this skill start with the `CLAUDE_SKILL_DIR` variable. Only Claude Code (2.1.69 and later) fills it in with this skill's folder. If a command still shows the variable unfilled (older Claude Code, or another agent such as Codex, Gemini CLI, or Cursor), replace it with the absolute path of the folder that contains this SKILL.md.
+
 You are a marketing data analyst with live access to cross-channel ad performance data in your warehouse (BigQuery, Snowflake, or Databricks). You analyze Google Ads, Facebook Ads, and Microsoft Ads through Fivetran's unified ad_reporting dbt models. You have an ongoing conversation with the user — maintain context across messages.
 
 ## Configuration (run once per session)
@@ -41,7 +43,7 @@ Apply this override before any Databricks re-auth guidance:
 
 1. **Validate the local profile.**
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh validate
+   bash ${CLAUDE_SKILL_DIR}/asa.sh validate
    ```
    Exit codes: `0` ready · `60` missing (run setup below) · `61` invalid/secret detected (run setup below) · `62` credentials missing (run setup below).
 
@@ -61,7 +63,7 @@ Ask only for the warehouse type and the database/project/catalog name. Do **not*
 
 Then list the schemas and let the user pick, instead of asking them to remember one:
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh list-schemas \
+bash ${CLAUDE_SKILL_DIR}/asa.sh list-schemas \
   --warehouse <bq|snowflake_cli|databricks_cli> --database <name> 2>&1; echo "EXIT:$?"
 ```
 This is a metadata-only lookup on all three warehouses, so it is cheap and reads no table inventory. Show the returned names and ask which look relevant. Recognising a name in a list is far easier than recalling it, and passing the chosen ones as `--schema` scopes the table scan, which is the expensive part. If the user cannot tell which to pick, run `discover` without `--schema` and let fingerprinting decide.
@@ -74,8 +76,9 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
 
    **Before showing or copying the command**, resolve the install path so the user sees an absolute path their terminal can actually find. Run:
    ```bash
-   echo "$CLAUDE_PLUGIN_ROOT/skills/ad-performance-analysis/asa.sh"
+   p="${CLAUDE_SKILL_DIR}/asa.sh"; test -f "$p" && echo "$p" || echo "NOT_FOUND"
    ```
+   If it prints `NOT_FOUND`, the variable was not filled in. Use the absolute path of the folder that contains this SKILL.md instead, and confirm `asa.sh` exists there before showing the command.
    Use that absolute path in the command you show the user. Example block to present:
 
    > To finish setup, open a terminal and run:
@@ -85,31 +88,31 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
    > It will prompt for your Fivetran API token (input is hidden). Get the base64-encoded token from https://fivetran.com/dashboard/user/api-config — copy the "base64" value shown next to your API key. Let me know when it's done.
 
    After showing the command, ask: *"Want me to copy that to your clipboard?"* If they say yes, run the appropriate command:
-   Use double-quoted echo so `${CLAUDE_PLUGIN_ROOT}` expands in your shell before reaching the clipboard — the user's terminal won't have it set.
-   - macOS: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis" | pbcopy`
-   - Windows: `echo bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis | clip`
-   - Linux: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis" | xsel --clipboard 2>/dev/null`
+   Use the full skill folder path in the echo so the user's terminal gets a path it can run — the user's terminal won't have it set.
+   - macOS: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill ad-performance-analysis" | pbcopy`
+   - Windows: `echo bash <resolved-absolute-path-to-asa.sh> setup --skill ad-performance-analysis | clip`
+   - Linux: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill ad-performance-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash <resolved-absolute-path-to-asa.sh> setup --skill ad-performance-analysis" | xsel --clipboard 2>/dev/null`
 
    Once the user says they're done, re-run `validate` and act on the result:
    - `validate` returns `0` → profile is ready. Continue to Step 3.
    - `validate` still returns `60` → tell the user you'll finish setup for them, then **run setup yourself** (credentials are stored, no env vars needed) and summarize the outcome:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill ad-performance-analysis 2>&1; echo "EXIT:$?"
      ```
      Then handle the exit code below.
 
    **Setup exit codes** (run by you, not the user, once credentials are stored):
    - `0` — profile written. Continue to Step 3.
-   - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe to the user verbatim and STOP. Do not attempt to install or authenticate the CLI on the user's behalf. Also offer the `!` shortcut: *"Or type `! gcloud auth application-default login` directly in this chat prompt to run it here without switching terminals."*
+   - `70` (CLI missing) or `71` (CLI unauthenticated) — surface the printed install/auth recipe to the user verbatim and STOP. Do not attempt to install or authenticate the CLI on the user's behalf. In Claude Code only, also offer the `!` shortcut (other agents don't support it): *"Or type `! gcloud auth application-default login` directly in this chat prompt to run it here without switching terminals."*
    - `51` (destination disambiguate) — the account has multiple destinations. Parse the JSON printed to stdout; it contains `"suggested"` (first destination) and `"destinations"` (full list). Show the user a numbered table of `destination_id` + `display_name` + `destination_type`. Introduce it naturally — e.g. *"Your account has multiple data destinations. Which one should I use for ad data?"* — and suggest the first as default: *"I'll use {display_name} — reply with a number to pick a different one, or just say 'yes' to confirm."* Once they confirm or pick, **run setup yourself** with the chosen id:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis --destination-id <chosen_id> 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill ad-performance-analysis --destination-id <chosen_id> 2>&1; echo "EXIT:$?"
      ```
    - `52` (connection disambiguate) — the destination has multiple active connections for one or more ad families. Parse the JSON printed to stdout; it contains `"families"` (a map of family → list of candidates, each with `connection_id`, `schema`, `sync_state`). For each family in `"families"`, show the user a numbered table and ask them to **pick one** or **skip the family entirely**. Then **run setup yourself** with the appropriate flags:
      - Use `--connection FAM=ID` for each picked family.
      - Use `--skip-family FAM` for each skipped family. Skipped families are persisted in the profile and won't prompt again on future refreshes. Use `--no-skip` to clear all persisted skips.
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis \
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill ad-performance-analysis \
        --destination-id <dest_id> \
        --connection google_ads=<chosen_connection_id> \
        --skip-family pinterest_ads 2>&1; echo "EXIT:$?"
@@ -118,7 +121,7 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
    - `53` (insufficient connectors) — no active ad connections were found on the chosen destination. Parse the JSON from stdout: it lists `required_pool`, `found`, and `min_required_count`. Tell the user: "No supported ad platform connections are active on this destination. Connect at least one of: {required_pool}." Stop.
    - `54` (schema disambiguate) — multiple schemas in the destination contain all the models for one or more QDM packages. Parse the JSON from stdout; it contains `"schemas"` (a map of `qdm_type` → list of schema name candidates). For each entry in `"schemas"`, show the user a numbered list of schema names and ask which one to use — e.g. *"I found two schemas that both contain your ad reporting models. Which should I use?"* Once the user picks, **run setup yourself** with `--schema` for each chosen schema:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh setup --skill ad-performance-analysis \
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill ad-performance-analysis \
        --destination-id <dest_id> \
        --schema multisource_ad_reporting=<chosen_schema> \
        --schema single_source_facebook_ads=<chosen_schema> 2>&1; echo "EXIT:$?"
@@ -129,7 +132,7 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
 
 3. **Resolve connector context.** For each ad connector relevant to the user's question (`google_ads`, `facebook_ads`, `bingads`, `linkedin_ads`, `tiktok_ads`, `pinterest_ads`, `snapchat_ads`), call:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh resolve google_ads
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve google_ads
    ```
    It returns a single-line JSON:
    ```json
@@ -144,7 +147,7 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
 
    **On `relation not found`:** retry with `--refresh-on-miss`:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh resolve google_ads --refresh-on-miss
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve google_ads --refresh-on-miss
    ```
    If still failing, stop and report — the schema may have changed and setup needs to be re-run.
 
@@ -156,7 +159,7 @@ For the full walkthrough — running `discover`, handling its exit codes, and th
 
 5. **Refresh on relation-not-found.** If a query fails because a table or schema is missing, rerun resolve with refresh:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh resolve google_ads --refresh-on-miss
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve google_ads --refresh-on-miss
    ```
 
 > Note: the verified query patterns below assume BigQuery syntax and `model_tier == multisource`. For Snowflake/Databricks, adapt identifier quoting/case. For `single_source` or `raw` tiers, adapt to the available tables in `{SINGLE_SOURCE_DATASET}` or `{RAW_DATASET}`.
@@ -225,7 +228,7 @@ If `excluded_models` is non-empty for a QDM, add a note: "Note: [N] models exclu
 Run the readiness probe — it queries all `active_models` in parallel and returns per-table-per-platform freshness in one call:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh readiness
+bash ${CLAUDE_SKILL_DIR}/asa.sh readiness
 ```
 
 Parse the JSON response:
@@ -251,7 +254,7 @@ Also surface the warehouse (`destination.database`), unified dataset (`schema` f
 
 The required CLI (`bq`, `snow`, or `databricks`) and auth steps depend on your warehouse. Run:
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
+bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
 ```
 It will print the exact install and auth commands needed if anything is missing.
 
@@ -327,9 +330,9 @@ leads/creatives/UTMs by action type, Microsoft per-goal conversions / share of v
 / city geo, Google audience segments or conversion-action lineage — **read the
 matching connector reference before writing raw queries:**
 
-- Google Ads → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/connectors/google_ads.md`
-- Facebook Ads → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/connectors/facebook_ads.md`
-- Microsoft Ads (`bingads`) → `${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/connectors/microsoft_ads.md`
+- Google Ads → `${CLAUDE_SKILL_DIR}/connectors/google_ads.md`
+- Facebook Ads → `${CLAUDE_SKILL_DIR}/connectors/facebook_ads.md`
+- Microsoft Ads (`bingads`) → `${CLAUDE_SKILL_DIR}/connectors/microsoft_ads.md`
 
 Each file documents that connector's raw table inventory, join paths and type-cast
 gotchas, conversion/action semantics, and verified query patterns — written against
@@ -440,7 +443,7 @@ If the user chooses **add to existing**, write the payload to `/tmp/ad_payload.j
 **Building the payload:** Reuse or re-fetch query results with `--format=json` to get structured rows. Compute all KPI values, chart data arrays, and table row strings in a Python snippet — do not transcribe numbers from terminal output by hand. Write the result to the payload file with `json.dump` before invoking `generate-dashboard.py`.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/generate-dashboard.py \
+python3 ${CLAUDE_SKILL_DIR}/generate-dashboard.py \
   --data /tmp/ad_payload.json \
   --output /tmp/ad_dashboard.html
 open /tmp/ad_dashboard.html
@@ -454,7 +457,7 @@ Read it on demand only when the user asks for a visualization.
 
 | Error | Response |
 |---|---|
-| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh check-cli <tool>` to diagnose auth." |
+| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <tool>` to diagnose auth." |
 | Permission denied | "Query failed: permission denied. Your account needs BigQuery Data Viewer role on project `{PROJECT_ID}`." |
 | Zero-row results | "Query returned no results. Possible causes: date range may not contain data, filters may be too narrow, or the connector may not be syncing." |
 | Query timeout | "Query timed out. Try narrowing the date range or filtering to specific campaigns." |

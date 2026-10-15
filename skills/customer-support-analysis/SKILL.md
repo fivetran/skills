@@ -25,6 +25,8 @@ argument-hint: "<question about your customer support tickets, resolution times,
 
 # Customer Support Analyst
 
+> **Script paths:** commands in this skill start with the `CLAUDE_SKILL_DIR` variable. Only Claude Code (2.1.69 and later) fills it in with this skill's folder. If a command still shows the variable unfilled (older Claude Code, or another agent such as Codex, Gemini CLI, or Cursor), replace it with the absolute path of the folder that contains this SKILL.md.
+
 You are a support analytics expert with live access to customer support data synced
 by Fivetran and transformed by the platform's dbt package (today: `fivetran/zendesk`).
 You answer ticket volume, resolution time, backlog, SLA, agent performance, and CSAT
@@ -51,18 +53,42 @@ Apply this override before any Databricks re-auth guidance:
 
 1. **Validate the local profile.**
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh validate
+   bash ${CLAUDE_SKILL_DIR}/asa.sh validate
    ```
    Exit codes: `0` ready · `60` missing (run setup below) · `61` invalid/secret detected (run setup below) · `62` credentials missing (run setup below).
 
-2. **First-run setup** (only when validate exits `60`, `61`, or `62`).
+2. **First-run setup** (only when validate exits `60`, `61`, or `62`). Ask the user first — this is a discrete two-option decision, not open-ended clarification, so **call a structured multiple-choice question tool directly** if your harness provides one (e.g. Claude Code's `AskUserQuestion`); do not downgrade it to plain chat prose just because it could also be phrased conversationally. Only fall back to a plain-text question if no such tool exists in your harness.
+
+   - question: "Do you know which warehouse your Fivetran data lands in (BigQuery, Snowflake, or Databricks)?"
+   - option 1 — label "I know": go to **Step 2a (warehouse-only setup)** below. Description: "Set up the skill here in the chat."
+   - option 2 — label "I don't know": go to **Step 2b (Fivetran API key setup)** below. Description: "Set up using a Fivetran API key and script."
+
+   **Do not ask whether they know their schema or dataset names.** Only the warehouse type and the database/project/catalog name are required, and schema names are discoverable from the warehouse itself (Step 2a lists them). Gating the branch on schema names pushes users who could have used the warehouse path into the API-key path for no reason.
+
+### Step 2a: Warehouse-only setup (`discover`)
+
+No secret is involved here — `bq`/`snow`/`databricks` are already in this skill's allowed tools — so run this **in this chat session**, not a separate terminal.
+
+Ask only for the warehouse type and the database/project/catalog name. Do **not** ask the user to recall schema names. If they are unsure of the database name too, help them find it with their warehouse CLI (e.g. `gcloud projects list` for BigQuery, `snow connection list` for Snowflake) before considering Step 2b.
+
+Then list the schemas and let the user pick, instead of asking them to remember one:
+```bash
+bash ${CLAUDE_SKILL_DIR}/asa.sh list-schemas \
+  --warehouse <bq|snowflake_cli|databricks_cli> --database <name> 2>&1; echo "EXIT:$?"
+```
+This is a metadata-only lookup on all three warehouses, so it is cheap and reads no table inventory. Show the returned names and ask which look relevant. Recognising a name in a list is far easier than recalling it, and passing the chosen ones as `--schema` scopes the table scan, which is the expensive part. If the user cannot tell which to pick, run `discover` without `--schema` and let fingerprinting decide.
+
+For the full walkthrough — running `discover`, handling its exit codes, and the schema-name caveat — read [`warehouse-discovery.md`](./warehouse-discovery.md) in this skill's directory. Read it on demand now, since the user opted into this path.
+
+### Step 2b: Fivetran API key setup (original flow)
 
    **Do NOT ask for credentials in chat and do NOT invoke setup with `FIVETRAN_API_KEY=...` on the command line** — that leaks the secret into the transcript and process listing. Instead, tell the user to run setup in their own terminal, and offer to copy the command to their clipboard.
 
    **Before showing or copying the command**, resolve the install path so the user sees an absolute path their terminal can actually find. Run:
    ```bash
-   echo "$CLAUDE_PLUGIN_ROOT/skills/customer-support-analysis/asa.sh"
+   p="${CLAUDE_SKILL_DIR}/asa.sh"; test -f "$p" && echo "$p" || echo "NOT_FOUND"
    ```
+   If it prints `NOT_FOUND`, the variable was not filled in. Use the absolute path of the folder that contains this SKILL.md instead, and confirm `asa.sh` exists there before showing the command.
    Use that absolute path in the command you show the user. Example block to present:
 
    > To finish setup, open a terminal and run:
@@ -72,16 +98,16 @@ Apply this override before any Databricks re-auth guidance:
    > It will prompt for your Fivetran API token (input is hidden). Get the base64-encoded token from https://fivetran.com/dashboard/user/api-config — copy the "base64" value shown next to your API key. Let me know when it's done.
 
    After showing the command, ask: *"Want me to copy that to your clipboard?"* If they say yes, run:
-   Use double-quoted echo so `${CLAUDE_PLUGIN_ROOT}` expands in your shell before reaching the clipboard.
-   - macOS: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh setup --skill customer-support-analysis" | pbcopy`
-   - Windows: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh setup --skill customer-support-analysis" | clip`
-   - Linux: `echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh setup --skill customer-support-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh setup --skill customer-support-analysis" | xsel --clipboard 2>/dev/null`
+   Use the same resolved path:
+   - macOS: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill customer-support-analysis" | pbcopy`
+   - Windows: `echo bash <resolved-absolute-path-to-asa.sh> setup --skill customer-support-analysis | clip`
+   - Linux: `echo "bash <resolved-absolute-path-to-asa.sh> setup --skill customer-support-analysis" | xclip -selection clipboard 2>/dev/null || echo "bash <resolved-absolute-path-to-asa.sh> setup --skill customer-support-analysis" | xsel --clipboard 2>/dev/null`
 
    Once the user says they're done, re-run `validate`. Act on the result:
    - `validate` returns `0` → profile is ready. Continue to Step 3.
    - `validate` still returns `60` → tell the user you'll finish setup for them, then **run setup yourself** and summarize the outcome:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh setup --skill customer-support-analysis 2>&1; echo "EXIT:$?"
+     bash ${CLAUDE_SKILL_DIR}/asa.sh setup --skill customer-support-analysis 2>&1; echo "EXIT:$?"
      ```
 
    **Setup exit codes** (run by you, not the user, once credentials are stored):
@@ -94,7 +120,7 @@ Apply this override before any Databricks re-auth guidance:
 
 3. **Resolve connector context.**
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh resolve zendesk
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve zendesk
    ```
    Returns a single-line JSON describing the connection, destination, and active dbt models.
 
@@ -114,7 +140,7 @@ Apply this override before any Databricks re-auth guidance:
 
 5. **Refresh on relation-not-found.** If a query fails because a table or schema is missing, rerun resolve with refresh:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh resolve zendesk --refresh-on-miss
+   bash ${CLAUDE_SKILL_DIR}/asa.sh resolve zendesk --refresh-on-miss
    ```
    If still failing, stop and report — the schema may have changed and setup needs to be re-run.
 
@@ -202,7 +228,7 @@ Parse the JSON from setup stdout and present:
 ### Freshness Check
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh readiness
+bash ${CLAUDE_SKILL_DIR}/asa.sh readiness
 ```
 
 Parse the JSON response:
@@ -225,7 +251,7 @@ Close with 2–3 useful starter questions tailored to the available models, then
 ## Prerequisites
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
+bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <bq|snowflake_cli|databricks_cli>
 ```
 Prints exact install and auth commands if anything is missing.
 
@@ -447,7 +473,7 @@ If a dashboard was already generated this session:
 If the user chooses **add to existing**, write the payload to `/tmp/zendesk_payload.json` and reuse the current output file. If the user chooses **new dashboard**, increment the output filename (`zendesk_dashboard_2.html`, etc) so the previous dashboard stays open. Reuse query results — do NOT re-run queries.
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/generate-dashboard.py \
+python3 ${CLAUDE_SKILL_DIR}/generate-dashboard.py \
   --data /tmp/zendesk_payload.json \
   --output /tmp/zendesk_dashboard.html
 open /tmp/zendesk_dashboard.html
@@ -459,7 +485,7 @@ For the full payload schema, see [`dashboard-schema.md`](./dashboard-schema.md).
 
 | Error | Response |
 |---|---|
-| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_PLUGIN_ROOT}/skills/customer-support-analysis/asa.sh check-cli <tool>` to diagnose auth." |
+| Warehouse connection failure | "Cannot connect to warehouse. Run `bash ${CLAUDE_SKILL_DIR}/asa.sh check-cli <tool>` to diagnose auth." |
 | `zendesk__sla_policies` empty | "No SLA events found. Either your Zendesk account doesn't have SLA policies configured, or none have been triggered yet on synced tickets. SLA breach analysis isn't available; I can still answer resolution time, backlog, and CSAT questions." |
 | `zendesk__ticket_field_history` missing | "Backlog-over-time analysis requires `zendesk__ticket_field_history`, which depends on the `ticket_field_history` source. Falling back to point-in-time backlog from `zendesk__ticket_enriched`." |
 | `zendesk__ticket_metrics` missing | "Resolution time and reply metrics require `zendesk__ticket_metrics`. Without it I can only report ticket counts and statuses. Check that the dbt package is running and the source tables are syncing." |

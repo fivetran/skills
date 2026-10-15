@@ -647,7 +647,7 @@ def _bq_query(sql: str, timeout: int = 30, raise_on_error: bool = False, max_row
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
-        msg = r.stderr.strip()
+        msg = r.stderr.strip() or r.stdout.strip()
         print(f"[asa] warn: bq query failed: {msg}", file=sys.stderr)
         if raise_on_error:
             raise RuntimeError(msg)
@@ -661,7 +661,7 @@ def _snow_query(sql: str, timeout: int = 30, raise_on_error: bool = False) -> Op
         capture_output=True, text=True, timeout=timeout,
     )
     if r.returncode != 0:
-        msg = r.stderr.strip()
+        msg = r.stderr.strip() or r.stdout.strip()
         print(f"[asa] warn: snow query failed: {msg}", file=sys.stderr)
         if raise_on_error:
             raise RuntimeError(msg)
@@ -694,7 +694,7 @@ def _databricks_query(sql: str, timeout: int = 30, raise_on_error: bool = False)
             capture_output=True, text=True, timeout=timeout + 10,
         )
     if r.returncode != 0:
-        msg = r.stderr.strip()
+        msg = r.stderr.strip() or r.stdout.strip()
         print(f"[asa] warn: databricks query failed: {msg}", file=sys.stderr)
         if raise_on_error:
             raise RuntimeError(msg)
@@ -844,7 +844,7 @@ def _list_schema_names(dest_type: str, database: str) -> List[str]:
             capture_output=True, text=True, timeout=60,
         )
         if r.returncode != 0:
-            raise RuntimeError(r.stderr.strip())
+            raise RuntimeError(r.stderr.strip() or r.stdout.strip())
         out = []
         for entry in json.loads(r.stdout.strip() or "[]"):
             ref = (entry or {}).get("datasetReference") or {}
@@ -878,6 +878,21 @@ def _list_schema_names(dest_type: str, database: str) -> List[str]:
     return sorted(set(out))
 
 
+# A mistyped database and a missing permission return the same error on
+# BigQuery ("Access Denied ... or perhaps it does not exist"), so both map to
+# exit 53 with one message that covers both causes.
+_NOT_FOUND_RE = re.compile(r"not\s+found|does\s+not\s+exist|access\s+denied|permission\s+denied", re.I)
+
+
+def _not_found_payload(database: str) -> dict:
+    return {
+        "status": "not_found",
+        "database": database,
+        "message": (f"Could not find or access {database!r}. Check the name and that "
+                    "your warehouse login can read it, or fall back to the API-key setup."),
+    }
+
+
 def cmd_list_schemas(warehouse_tool: str, database: str) -> int:
     if warehouse_tool not in WAREHOUSE_TOOL_TO_DEST_TYPE:
         print(f"[asa] unknown --warehouse {warehouse_tool!r}; expected one of "
@@ -895,6 +910,10 @@ def cmd_list_schemas(warehouse_tool: str, database: str) -> int:
         print(f"[asa] {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
+        if _NOT_FOUND_RE.search(str(exc)):
+            _agent_print({**_not_found_payload(database), "schemas": []},
+                         f"Could not find or access {database}.")
+            return EXIT_INSUFFICIENT_CONNECTORS
         print(f"[asa] could not list schemas in {database!r}: {exc}", file=sys.stderr)
         return 1
 
@@ -1134,6 +1153,9 @@ def cmd_discover(
     try:
         pairs = _list_tables(dest_type, database, resolved_location, schema_hints or None)
     except RuntimeError as exc:
+        if _NOT_FOUND_RE.search(str(exc)):
+            _agent_print(_not_found_payload(database), f"Could not find or access {database}.")
+            return EXIT_INSUFFICIENT_CONNECTORS
         print(f"[asa] discovery query failed: {exc}", file=sys.stderr)
         return 1
     except ValueError as exc:
@@ -1149,7 +1171,7 @@ def cmd_discover(
                             "database name and schema hints, or fall back to the "
                             "API-key setup.",
             },
-            "No tables found. Return to your Claude Code chat to continue.",
+            "No tables found. Return to your agent chat to continue.",
         )
         return EXIT_INSUFFICIENT_CONNECTORS
 
@@ -1405,7 +1427,7 @@ def cmd_discover(
                 "found": found,
                 "min_required_count": min_required,
             },
-            "No supported ad connectors found. Return to your Claude Code chat for details.",
+            "No supported ad connectors found. Return to your agent chat for details.",
         )
         return EXIT_INSUFFICIENT_CONNECTORS
 
@@ -1480,7 +1502,7 @@ def cmd_discover(
         payload["ignored_schema_override_keys"] = unknown_override_keys
     _agent_print(
         payload,
-        "Warehouse discovery complete. Return to your Claude Code chat to continue.",
+        "Warehouse discovery complete. Return to your agent chat to continue.",
     )
     return EXIT_OK
 
@@ -1749,7 +1771,7 @@ def cmd_setup(
     else:
         _agent_print(
             {"status": "disambiguate_required", "suggested": destinations[0], "destinations": destinations},
-            "Credentials verified. Return to your Claude Code chat to continue setup.",
+            "Credentials verified. Return to your agent chat to continue setup.",
         )
         return EXIT_DESTINATION_DISAMBIGUATE
 
@@ -1884,7 +1906,7 @@ def cmd_setup(
     if needs_disambig:
         _agent_print(
             {"status": "disambiguate_required", "families": needs_disambig},
-            "Multiple active connections found for the same source. Return to your Claude Code chat to continue setup.",
+            "Multiple active connections found for the same source. Return to your agent chat to continue setup.",
         )
         return EXIT_CONNECTION_DISAMBIGUATE
 
@@ -1892,7 +1914,7 @@ def cmd_setup(
     if len(required_found) < min_required:
         _agent_print(
             {"status": "insufficient_connectors", "required_pool": sorted(REQUIRED_POOL), "found": required_found, "min_required_count": min_required},
-            "No supported ad connectors found on this destination. Return to your Claude Code chat for details.",
+            "No supported ad connectors found on this destination. Return to your agent chat for details.",
         )
         return EXIT_INSUFFICIENT_CONNECTORS
 
@@ -1940,7 +1962,7 @@ def cmd_setup(
     if needs_schema_disambig:
         _agent_print(
             {"status": "disambiguate_required", "schemas": needs_schema_disambig},
-            "Multiple schemas found. Return to your Claude Code chat to continue setup.",
+            "Multiple schemas found. Return to your agent chat to continue setup.",
         )
         return EXIT_SCHEMA_DISAMBIGUATE
 
@@ -2066,7 +2088,7 @@ def cmd_setup(
             "single_source_qdms": single_source_qdms,
             "multi_source_qdms":  multi_source_qdms,
         },
-        "Fivetran profile saved. Return to your Claude Code chat to continue.",
+        "Fivetran profile saved. Return to your agent chat to continue.",
     )
     return EXIT_OK
 

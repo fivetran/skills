@@ -8,13 +8,13 @@ No secret is involved here — `bq`/`snow`/`databricks` are already in this skil
 2. Run `check-cli` for the chosen warehouse tool first (same as the Prerequisites step in `SKILL.md`) to confirm the CLI is installed and authenticated.
 3. List the schemas and let the user pick from what is shown, rather than asking them to name one from memory:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh list-schemas \
+   bash ${CLAUDE_SKILL_DIR}/asa.sh list-schemas \
      --warehouse <bq|snowflake_cli|databricks_cli> --database <name> 2>&1; echo "EXIT:$?"
    ```
    This is a metadata-only lookup (`bq ls`, `SHOW SCHEMAS`), so it is cheap on all three warehouses and reads no table inventory. Exit `0` prints `schemas[]`; exit `53` means the database has no schemas, so re-check the database name. Show the names, ask which look relevant, and pass those as `--schema` in the next step. If the user cannot tell, skip `--schema` and let fingerprinting decide. On BigQuery this step also avoids the `--location` requirement, since `bq ls` is not a regional `INFORMATION_SCHEMA` view.
 4. Run discovery:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh discover \
+   bash ${CLAUDE_SKILL_DIR}/asa.sh discover \
      --warehouse <bq|snowflake_cli|databricks_cli> \
      --database <project|database|catalog> \
      --schema <schema_name> [--schema <schema_name> ...] 2>&1; echo "EXIT:$?"
@@ -29,7 +29,7 @@ No secret is involved here — `bq`/`snow`/`databricks` are already in this skil
    - `70` (CLI missing) or `71` (CLI unauthenticated) — same handling as `SKILL.md`'s setup exit codes: surface the printed recipe verbatim and STOP.
    - `54` (schema disambiguate) — multiple schemas matched the same fingerprint. Parse the JSON; `"schemas"` maps a key (either `"multisource_ad_reporting"` for the unified layer, or a connector family like `google_ads` for a raw schema) to a list of candidate schema names, and `"hint"` carries a ready-made re-run flag string. Show the candidate names to the user and ask which to use for each key, then re-run with `--schema-override KEY=<chosen_schema>` (repeatable):
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/skills/ad-performance-analysis/asa.sh discover \
+     bash ${CLAUDE_SKILL_DIR}/asa.sh discover \
        --warehouse <tool> --database <db> --schema <hint> \
        --schema-override google_ads=<chosen_schema> 2>&1; echo "EXIT:$?"
      ```
