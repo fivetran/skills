@@ -41,10 +41,6 @@
       "Which campaigns spent over $1K last week with zero conversions?"
     ]
   },
-  "freshness": {
-    "max_staleness_hours": 24,
-    "minimum_history_days": 30
-  },
   "scoping": {
     "require_same_destination": true
   },

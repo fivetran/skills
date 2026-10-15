@@ -42,10 +42,6 @@
       "What's the revenue split between new and returning customers?"
     ]
   },
-  "freshness": {
-    "max_staleness_hours": 24,
-    "minimum_history_days": 30
-  },
   "scoping": {
     "require_same_destination": true
   },

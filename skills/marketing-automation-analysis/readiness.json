@@ -43,10 +43,6 @@
       "Which lead sources produce the highest conversion to opportunity?"
     ]
   },
-  "freshness": {
-    "max_staleness_hours": 24,
-    "minimum_history_days": 90
-  },
   "scoping": {
     "require_same_destination": true
   },
